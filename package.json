@@ -65,7 +65,7 @@
     "@opentelemetry/sdk-trace-node": "^1.25.1",
     "@tavily/core": "^0.7.6",
     "@vercel/functions": "^3.7.5",
-    "axios": "^1.18.1",
+    "axios": "^1.19.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
