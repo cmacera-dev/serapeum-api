@@ -1,6 +1,9 @@
 name: Sync OpenAPI spec to Flutter
 
 on:
+  # Runnable by hand: with the spec unchanged the job exits before it writes
+  # anything, which makes it a side-effect-free check that the App token works.
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
