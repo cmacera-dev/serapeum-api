@@ -20,11 +20,8 @@ jobs:
               return;
             }
             const title = context.payload.pull_request.title;
-            if (title.startsWith('chore(release):')) {
-              console.log('Skipping Linear ID check for release PR.');
-              return;
-            }
-            const regex = /^(\[DEV-\d+\]|DEV-\d+)/;
+            const types = 'feat|fix|chore|refactor|docs|test|style|perf|ci|build|revert';
+            const regex = new RegExp(`^(${types})(\\([^)]+\\))?!?: .+`);
             if (!regex.test(title)) {
-              core.setFailed(`PR title "${title}" must start with a Linear Issue ID, e.g. "DEV-123" or "[DEV-123]".`);
+              core.setFailed(`PR title "${title}" must follow Conventional Commits, e.g. "fix(api): correct pagination". Issues are linked with "Closes #123" in the body, not with a title prefix.`);
             }
