@@ -36,7 +36,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.FLUTTER_SYNC_APP_ID }}
+          client-id: ${{ secrets.FLUTTER_SYNC_CLIENT_ID }}
           private-key: ${{ secrets.FLUTTER_SYNC_APP_KEY }}
           repositories: serapeum-app
 
