@@ -238,6 +238,7 @@ on any PR that touches it, which is what stops it drifting out of working order.
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — Technical blueprint and architectural patterns
 - [RULES.md](./RULES.md) — Coding standards, CI rules, and Git workflow
 - [AGENTS.md](./AGENTS.md) — AI agent operational manifest
+- [SECURITY.md](./SECURITY.md) — How to report a vulnerability privately
 
 ## 🤝 Contributing
 

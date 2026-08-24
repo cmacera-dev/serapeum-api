@@ -1,0 +1,7 @@
+# Every change is reviewed by the maintainer.
+#
+# This file only requests reviews by default. It becomes enforcement the moment
+# `require_code_owner_review` is turned on in the `main` ruleset — which is worth doing
+# only once there is more than one person who can approve, since a solo maintainer cannot
+# approve their own pull request.
+* @cmacera
