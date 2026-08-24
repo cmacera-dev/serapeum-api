@@ -21,17 +21,29 @@ export default defineConfig({
         '**/types.ts',
         '**/*-types.ts',
       ],
+      // A ratchet, not a target. Set just below the numbers the suite actually produced
+      // the first time coverage ran, so it catches a regression without failing today.
+      // Raise them when the real figures move up; never lower them to make a build pass.
+      thresholds: {
+        statements: 82,
+        branches: 70,
+        functions: 85,
+        lines: 83,
+      },
     },
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist', 'tests/e2e/**'],
-    setupFiles: ['./tests/setup-media-agent.ts'],
+    exclude: ['node_modules', 'dist'],
+    setupFiles: ['./tests/setup-genkit.ts'],
     pool: 'threads',
     isolate: true,
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@serapeum/shared-schemas': path.resolve(__dirname, './packages/shared-schemas/src/index.ts'),
+      '@': path.resolve(import.meta.dirname, './src'),
+      '@serapeum/shared-schemas': path.resolve(
+        import.meta.dirname,
+        './packages/shared-schemas/src/index.ts'
+      ),
     },
   },
 });

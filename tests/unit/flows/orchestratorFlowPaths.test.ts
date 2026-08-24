@@ -1,14 +1,14 @@
 import 'dotenv/config';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { orchestratorFlow } from '../src/flows/agent/orchestratorFlow.js';
-import { searchAll } from '../src/flows/catalog/searchAll.js';
-import { searchMedia } from '../src/flows/catalog/searchMedia.js';
-import { searchGames } from '../src/flows/catalog/searchGames.js';
-import { searchBooks } from '../src/flows/catalog/searchBooks.js';
-import { searchTavilyTool } from '../src/tools/search-tavily-tool.js';
-import { routerPrompt } from '../src/prompts/routerPrompt.js';
-import { extractorPrompt } from '../src/prompts/extractorPrompt.js';
-import { synthesizerPrompt } from '../src/prompts/synthesizerPrompt.js';
+import { orchestratorFlow } from '../../../src/flows/agent/orchestratorFlow.js';
+import { searchAll } from '../../../src/flows/catalog/searchAll.js';
+import { searchMedia } from '../../../src/flows/catalog/searchMedia.js';
+import { searchGames } from '../../../src/flows/catalog/searchGames.js';
+import { searchBooks } from '../../../src/flows/catalog/searchBooks.js';
+import { searchTavilyTool } from '../../../src/tools/search-tavily-tool.js';
+import { routerPrompt } from '../../../src/prompts/routerPrompt.js';
+import { extractorPrompt } from '../../../src/prompts/extractorPrompt.js';
+import { synthesizerPrompt } from '../../../src/prompts/synthesizerPrompt.js';
 
 // Prevent OTEL from injecting a real traceId in tests
 vi.mock('@opentelemetry/api', () => ({
@@ -16,15 +16,16 @@ vi.mock('@opentelemetry/api', () => ({
 }));
 
 // Prevent real Supabase calls — cache is transparent in these tests
-vi.mock('../src/lib/queryCache.js', () => ({
+vi.mock('../../../src/lib/queryCache.js', () => ({
   generateCacheKey: () => 'deadbeefcafe0000',
   getCachedResponse: vi.fn().mockResolvedValue(null),
   cacheAsync: vi.fn().mockImplementation((_key: unknown, response: unknown) => response),
 }));
 
 // Mock dependencies
-vi.mock('../src/lib/ai.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/lib/ai.js')>('../src/lib/ai.js');
+vi.mock('../../../src/lib/ai.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../../src/lib/ai.js')>('../../../src/lib/ai.js');
   return {
     ...actual,
     ai: {
@@ -37,9 +38,9 @@ vi.mock('../src/lib/ai.js', async () => {
   };
 });
 
-vi.mock('../src/flows/catalog/searchMedia.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/flows/catalog/searchMedia.js')>(
-    '../src/flows/catalog/searchMedia.js'
+vi.mock('../../../src/flows/catalog/searchMedia.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/flows/catalog/searchMedia.js')>(
+    '../../../src/flows/catalog/searchMedia.js'
   );
   return {
     ...actual,
@@ -47,9 +48,9 @@ vi.mock('../src/flows/catalog/searchMedia.js', async () => {
   };
 });
 
-vi.mock('../src/flows/catalog/searchGames.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/flows/catalog/searchGames.js')>(
-    '../src/flows/catalog/searchGames.js'
+vi.mock('../../../src/flows/catalog/searchGames.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/flows/catalog/searchGames.js')>(
+    '../../../src/flows/catalog/searchGames.js'
   );
   return {
     ...actual,
@@ -57,9 +58,9 @@ vi.mock('../src/flows/catalog/searchGames.js', async () => {
   };
 });
 
-vi.mock('../src/flows/catalog/searchBooks.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/flows/catalog/searchBooks.js')>(
-    '../src/flows/catalog/searchBooks.js'
+vi.mock('../../../src/flows/catalog/searchBooks.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/flows/catalog/searchBooks.js')>(
+    '../../../src/flows/catalog/searchBooks.js'
   );
   return {
     ...actual,
@@ -67,9 +68,9 @@ vi.mock('../src/flows/catalog/searchBooks.js', async () => {
   };
 });
 
-vi.mock('../src/flows/catalog/searchAll.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/flows/catalog/searchAll.js')>(
-    '../src/flows/catalog/searchAll.js'
+vi.mock('../../../src/flows/catalog/searchAll.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/flows/catalog/searchAll.js')>(
+    '../../../src/flows/catalog/searchAll.js'
   );
   return {
     ...actual,
@@ -77,20 +78,20 @@ vi.mock('../src/flows/catalog/searchAll.js', async () => {
   };
 });
 
-vi.mock('../src/tools/search-tavily-tool.js', () => ({
+vi.mock('../../../src/tools/search-tavily-tool.js', () => ({
   searchTavilyTool: vi.fn(),
 }));
 
 // Mock the prompt modules themselves
-vi.mock('../src/prompts/routerPrompt.js', () => ({
+vi.mock('../../../src/prompts/routerPrompt.js', () => ({
   routerPrompt: vi.fn(),
 }));
 
-vi.mock('../src/prompts/extractorPrompt.js', () => ({
+vi.mock('../../../src/prompts/extractorPrompt.js', () => ({
   extractorPrompt: vi.fn(),
 }));
 
-vi.mock('../src/prompts/synthesizerPrompt.js', () => ({
+vi.mock('../../../src/prompts/synthesizerPrompt.js', () => ({
   synthesizerPrompt: vi.fn(),
 }));
 

@@ -157,7 +157,7 @@ The CI pipeline is the final gatekeeper of Serapeum's standards.
 |---|---|---|
 | `typecheck` | `tsc --noEmit` | `src/` only |
 | `lint` | `eslint src --ext .ts` | `src/` only |
-| `test:run` | `vitest run` | excludes `tests/e2e/**` |
+| `test:run` | `vitest run --coverage` | thresholds in `vitest.config.ts` |
 | `build` | `tsc && cp -r src/locales dist/` | full build |
 
 **`format` job** (separate workflow):
