@@ -10,15 +10,20 @@ on:
       - 'packages/shared-schemas/**'
       - 'scripts/generate-openapi.ts'
 
+# Least privilege, declared explicitly: the repo default is currently `read`, but a
+# change to that default must not silently widen what these workflows can do.
+permissions:
+  contents: read
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout serapeum-api
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -34,7 +39,7 @@ jobs:
 
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.FLUTTER_SYNC_CLIENT_ID }}
           private-key: ${{ secrets.FLUTTER_SYNC_APP_KEY }}

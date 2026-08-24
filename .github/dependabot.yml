@@ -13,6 +13,12 @@ updates:
     # never merge is enough to starve the queue, so anything permanently blocked belongs
     # in `ignore` below rather than sitting open.
     open-pull-requests-limit: 10
+    # A freshly published version is the riskiest one to take: a compromised release is
+    # usually caught within days. This waits before *proposing* an update — it applies to
+    # version updates only, so security updates still arrive immediately.
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
     ignore:
       # Blocked by genkit pinning zod@^3.x — tracked in check-dependency-blockers.yml
       - dependency-name: "zod"
