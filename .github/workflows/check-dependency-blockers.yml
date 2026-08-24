@@ -1,94 +1,101 @@
-name: Check dependency upgrade blockers
+name: Check dependency blockers
 
 on:
   schedule:
     - cron: '0 9 * * 1' # Every Monday at 9:00 UTC
   workflow_dispatch:
 
+# The logic lives in scripts/check-dependency-blockers.ts, not here, so adding a new
+# blocker is one object in a list instead of another copy-pasted step.
 jobs:
   check-blockers:
+    name: Check blockers
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
+      security-events: read
 
     steps:
-      - name: Check genkit dependency versions
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check blockers, overrides and advisories
         id: check
-        run: |
-          DEPS=$(npm info @genkit-ai/core@latest dependencies --json)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run check:blockers
 
-          GENKIT_ZOD=$(echo "$DEPS" | jq -r '.zod // ""')
-          GENKIT_OTEL=$(echo "$DEPS" | jq -r '.["@opentelemetry/sdk-node"] // ""')
+      - name: Publish report to the run summary
+        run: cat "${{ steps.check.outputs.report_file }}" >> "$GITHUB_STEP_SUMMARY"
 
-          echo "genkit_zod=$GENKIT_ZOD" >> "$GITHUB_OUTPUT"
-          echo "genkit_otel=$GENKIT_OTEL" >> "$GITHUB_OUTPUT"
-
-          # Extract major version number from semver range (e.g. "^4.0.0" → 4)
-          ZOD_MAJOR=$(echo "$GENKIT_ZOD" | sed 's/[^0-9]*//' | cut -d'.' -f1)
-          # Extract minor version of sdk-node (e.g. "^0.200.0" → 200)
-          OTEL_MINOR=$(echo "$GENKIT_OTEL" | sed 's/[^0-9]*//' | cut -d'.' -f2)
-
-          echo "zod_major=$ZOD_MAJOR" >> "$GITHUB_OUTPUT"
-          echo "otel_minor=$OTEL_MINOR" >> "$GITHUB_OUTPUT"
-
-      - name: Open issue if zod v4 is unblocked
-        if: ${{ steps.check.outputs.zod_major >= 4 }}
+      - name: Open, update or close the status issue
         uses: actions/github-script@v9
+        env:
+          ACTIONABLE: ${{ steps.check.outputs.actionable }}
+          REPORT_FILE: ${{ steps.check.outputs.report_file }}
         with:
           script: |
-            const { data: issues } = await github.rest.issues.listForRepo({
+            const fs = require('fs');
+
+            const TITLE = 'Dependency blockers & security status';
+            const LABEL = 'dependency-status';
+
+            const body = fs.readFileSync(process.env.REPORT_FILE, 'utf8');
+            const actionable = process.env.ACTIONABLE === 'true';
+
+            // One issue, reused forever: it opens when there is work and closes itself when
+            // there is not, so the repo never accumulates a pile of stale blocker issues.
+            const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: ['dependency-unblocked'],
-              state: 'open',
+              labels: [LABEL],
+              state: 'all',
+              per_page: 100,
             });
 
-            if (issues.some(i => i.title.includes('zod v4'))) return;
+            const issue = existing.find((candidate) => candidate.title === TITLE);
 
-            await github.rest.issues.create({
+            if (issue === undefined) {
+              if (!actionable) {
+                core.info('Nothing actionable and no issue to update.');
+                return;
+              }
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: TITLE,
+                labels: [LABEL, 'dependencies'],
+                body,
+              });
+              core.info(`Opened #${created.number}.`);
+              return;
+            }
+
+            await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: 'chore: genkit now supports zod v4 — re-enable Dependabot upgrades',
-              labels: ['dependency-unblocked'],
-              body: [
-                '## Dependency blocker resolved',
-                '',
-                `\`@genkit-ai/core\` now depends on \`zod: ${steps.check.outputs.genkit_zod}\`.`,
-                '',
-                '### Action required',
-                '1. Remove the `zod` ignore rule from `.github/dependabot.yml`',
-                '2. Remove the `@asteasolutions/zod-to-openapi` ignore rule (v8 requires zod v4)',
-                '3. Migrate the codebase to zod v4 (breaking changes: https://zod.dev/v4)',
-                '4. Re-run Dependabot for PRs #28 and #74',
-              ].join('\n'),
+              issue_number: issue.number,
+              state: actionable ? 'open' : 'closed',
+              body,
             });
 
-      - name: Open issue if opentelemetry is unblocked
-        if: ${{ steps.check.outputs.otel_minor >= 200 }}
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: ['dependency-unblocked'],
-              state: 'open',
-            });
+            if (!actionable && issue.state === 'open') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: 'Everything here has been dealt with. Closing until the next blocker lifts.',
+              });
+            }
 
-            if (issues.some(i => i.title.includes('opentelemetry'))) return;
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'chore: genkit now supports opentelemetry 2.x — re-enable Dependabot upgrade',
-              labels: ['dependency-unblocked'],
-              body: [
-                '## Dependency blocker resolved',
-                '',
-                `\`@genkit-ai/core\` now depends on \`@opentelemetry/sdk-node: ${steps.check.outputs.genkit_otel}\`.`,
-                '',
-                '### Action required',
-                '1. Remove the `@opentelemetry/exporter-trace-otlp-http` and `@opentelemetry/sdk-trace-node` ignore rules from `.github/dependabot.yml`',
-                '2. Reopen Dependabot PRs #86 and #91 or let Dependabot recreate them',
-              ].join('\n'),
-            });
+            core.info(`Updated #${issue.number} (actionable: ${actionable}).`);

@@ -24,6 +24,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Catches lockfile entries pruned by `npm install` on macOS, which resolve fine
+      # locally and then break `npm ci` here. See scripts/check-lockfile.ts.
+      - name: Check lockfile integrity
+        run: npm run check:lockfile
+
       - name: Run type check
         run: npm run typecheck
 
