@@ -89,10 +89,8 @@ Runs **standalone** as a portable Node service (see [Quick Start](#-quick-start)
 | `lint` | ESLint on `src/` |
 | `format` | Prettier write |
 | `format:check` | Prettier check (used by CI) |
-| `test:run` | Vitest single run (CI mode, excludes e2e) |
+| `test:run` | Vitest single run with coverage; thresholds enforced (used by CI) |
 | `test` | Vitest watch mode |
-| `test:coverage` | Coverage report |
-| `test:e2e` | E2E tests (requires `RUN_E2E=true`, hits real APIs) |
 | `generate:openapi` | Regenerate `docs/openapi.yaml` from Zod schemas |
 | `sync:flutter` | Sync OpenAPI spec to Flutter app repo |
 

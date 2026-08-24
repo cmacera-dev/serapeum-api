@@ -18,7 +18,7 @@ npm run genkit:start:ts    # Same with timestamps (macOS)
 npm run dev                # tsx watch (no DevTools)
 npm run typecheck          # tsc --noEmit (src/ only)
 npm run lint               # eslint src/
-npm run test:run           # vitest single run (CI mode, excludes e2e)
+npm run test:run           # vitest + coverage; thresholds enforced, HTML report in coverage/
 npm run build              # tsc + copy locales → dist/
 ```
 
@@ -43,7 +43,6 @@ packages/
 tests/
   unit/             # Unit tests
   integration/      # Integration tests
-  e2e/              # E2E tests (excluded from normal runs, require RUN_E2E=true)
 .genkit/
   datasets/         # Eval datasets (JSON) and index
 ```
@@ -97,7 +96,7 @@ All checks run against `src/` only. Must pass before merge:
 |---|---|
 | `typecheck` | `tsc --noEmit` |
 | `lint` | `eslint src --ext .ts` |
-| `test:run` | `vitest run` (excludes e2e) |
+| `test:run` | `vitest run --coverage` — thresholds enforced, see `vitest.config.ts` |
 | `build` | `tsc && cp -r src/locales dist/` |
 | `format:check` | `prettier --check "src/**/*.ts"` |
 | `check-pr-title` | PR title must be Conventional Commits — **no** `[DEV-XX]` prefix; issues are linked with `Closes #123` in the body. Skipped for Dependabot PRs |
