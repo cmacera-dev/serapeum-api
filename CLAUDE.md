@@ -255,7 +255,17 @@ The `release.yml` workflow re-runs `typecheck` / `lint` / `test:run`, deploys vi
 ## Architecture constraints
 
 - **No vendor lock-in:** avoid Firebase-specific features (Functions, Triggers)
-- **Portability:** assume Docker container behind a reverse proxy
+- **Portability:** assume Docker container behind a reverse proxy. The image is built and
+  booted in CI ([.github/workflows/docker.yml](.github/workflows/docker.yml)) on any PR
+  that touches it — building alone is not enough, since the image once built fine and
+  still could not serve a request
+- **Build output lives at `dist/src/`, not `dist/`:** `tsconfig.json` sets `rootDir: "."`,
+  so the compiler mirrors the repo layout. `main` and `start` point at `dist/src/index.js`
+  accordingly. A `dist/index.js` in a working tree is a stale artifact from an older
+  layout, not something a clean build produces
+- **Prompts are runtime data:** `promptDir` reads `prompts/` from disk at startup, resolved
+  relative to the module rather than the working directory. Any deployment target must ship
+  that directory — `vercel.json` does it with `includeFiles`, the Dockerfile with a `COPY`
 - **Config via env:** all external credentials and model selection through `process.env`
 - **Schemas first:** define Zod schemas before implementing flows or tools
 - **Error handling:** explicit error handling on all HTTP calls (check `res.ok` before `res.json()`)

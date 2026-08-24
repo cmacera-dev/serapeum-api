@@ -1,3 +1,7 @@
+import { existsSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
 import { genkit } from 'genkit';
 import type { GenkitPlugin, GenkitPluginV2 } from 'genkit/plugin';
 import { z } from '@genkit-ai/core';
@@ -5,6 +9,28 @@ import { googlePlugin, ollamaPlugin, ollamaCloudPlugin, openRouterPlugin } from 
 import { initLangfuseTelemetry } from './telemetry.js';
 
 const provider = process.env['AI_PROVIDER'];
+
+/**
+ * Locates the dotprompt directory.
+ *
+ * This used to be the literal './prompts', resolved against the process working directory.
+ * That works when the server is started from the repository root and on Vercel, where
+ * `vercel.json` ships `prompts/**` alongside the function — but it silently breaks anywhere
+ * the process starts elsewhere, which is exactly how the Docker image ended up unable to
+ * load a single prompt.
+ *
+ * Preferring a module-relative path makes it independent of the caller: from `dist/lib/`
+ * and from `src/lib/` alike, `../../prompts` is the directory next to the built output.
+ * The working directory stays as a fallback so existing deployments keep resolving the way
+ * they always have.
+ */
+function resolvePromptDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+
+  const candidates = [resolve(moduleDir, '../../prompts'), resolve(process.cwd(), 'prompts')];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[1]!;
+}
 
 /**
  * Global Genkit instance configuration.
@@ -18,7 +44,7 @@ const plugins = (
 
 export const ai = genkit({
   plugins,
-  promptDir: './prompts',
+  promptDir: resolvePromptDir(),
 });
 
 await initLangfuseTelemetry();

@@ -213,12 +213,23 @@ docker build -t serapeum-api .
 
 # Run
 docker run -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e CORS_ORIGINS=https://your-frontend.example \
   -e GOOGLE_GENAI_API_KEY=your_key \
-  -e GEMINI_MODEL=gemini-2.0-flash \
-  -e SUPABASE_JWT_SECRET=your_secret \
+  -e GEMINI_MODEL=gemini-2.5-flash \
+  -e SUPABASE_URL=https://your-project.supabase.co \
   -e PORT=3000 \
   serapeum-api
 ```
+
+`CORS_ORIGINS` is required whenever `NODE_ENV=production` — the API refuses to start
+rather than defaulting to `*`.
+
+Authentication verifies Supabase JWTs against the project's public JWKS endpoint, so
+`SUPABASE_URL` is what it needs; there is no shared JWT secret.
+
+The image is built and booted by [.github/workflows/docker.yml](.github/workflows/docker.yml)
+on any PR that touches it, which is what stops it drifting out of working order.
 
 ---
 
