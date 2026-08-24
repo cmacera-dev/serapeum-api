@@ -131,7 +131,13 @@ every Monday and answers three questions:
    Dependabot alerts API rejects the Actions `GITHUB_TOKEN`, so it needs no credentials
    and works locally too). The patched version comes from the advisory's own `<x.y.z`
    upper bound. Advisories owned by a still-holding blocker are excluded, because "just
-   override `@opentelemetry/*`" would break genkit outright.
+   override `@opentelemetry/*`" would break genkit outright. What is left is split into
+   safe pins (fix is inside a major already in the tree) and judgement calls (fix is in a
+   higher major, so pinning would drag consumers across a major boundary).
+
+   "Covered" is decided from the lockfile, not from the override keys. A scoped override
+   like `uuid@11` only patches that one line — the tree can still carry vulnerable copies
+   at other majors.
 
 Output goes to the run summary, and to a single self-managing issue labelled
 `dependency-status`: it opens when there is work and closes itself when there is not.

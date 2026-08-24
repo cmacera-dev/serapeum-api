@@ -363,6 +363,16 @@ interface UncoveredAdvisory {
   scope: string;
   patched: string;
   summary: string;
+  /** Versions currently in the tree, so the size of the jump is visible. */
+  installed: string[];
+  /**
+   * Whether the fix lands in a major the tree does not already have.
+   *
+   * This is the difference between a safe blind pin and a judgement call: `uuid` is fixed
+   * in 11.1.1 while `@google-cloud/*` still pulls 8.3.2 and 9.0.1, so pinning it would
+   * force those consumers across three majors.
+   */
+  crossMajor: boolean;
 }
 
 interface AuditAdvisory {
@@ -397,17 +407,33 @@ function patchedVersion(range: string): string | null {
   return match?.[1] ?? null;
 }
 
-/** Whether every copy of a package in the lockfile is dev-only, for prioritisation. */
-function dependencyScope(name: string): string {
+interface LockPackage {
+  version?: string;
+  dev?: boolean;
+}
+
+/** Every copy of a package in the lockfile. A package can appear at several versions. */
+function lockCopies(name: string): LockPackage[] {
   const lock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8')) as {
-    packages: Record<string, { dev?: boolean }>;
+    packages: Record<string, LockPackage>;
   };
 
-  const copies = Object.entries(lock.packages).filter(([path]) =>
-    path.endsWith(`node_modules/${name}`)
-  );
+  return Object.entries(lock.packages)
+    .filter(([path]) => path.endsWith(`node_modules/${name}`))
+    .map(([, entry]) => entry);
+}
+
+function installedVersions(name: string): string[] {
+  return lockCopies(name)
+    .map((entry) => entry.version)
+    .filter((version): version is string => version !== undefined);
+}
+
+/** Whether every copy of a package in the lockfile is dev-only, for prioritisation. */
+function dependencyScope(name: string): string {
+  const copies = lockCopies(name);
   if (copies.length === 0) return 'unknown';
-  return copies.every(([, entry]) => entry.dev === true) ? 'development' : 'runtime';
+  return copies.every((entry) => entry.dev === true) ? 'development' : 'runtime';
 }
 
 /**
@@ -425,10 +451,7 @@ function dependencyScope(name: string): string {
  * mechanism that stops working the day the PAT expires. This reads the lockfile and needs
  * no credentials, so it also works when run locally.
  */
-function scanAdvisories(
-  overrides: Record<string, string>,
-  holding: Blocker[]
-): AdvisoryScan | null {
+function scanAdvisories(holding: Blocker[]): AdvisoryScan | null {
   let raw: string;
   try {
     // npm audit exits non-zero whenever it finds anything, so the output is on the error.
@@ -446,11 +469,16 @@ function scanAdvisories(
   const report = JSON.parse(raw) as { vulnerabilities?: Record<string, AuditEntry> };
   const entries = Object.values(report.vulnerabilities ?? {});
 
-  // An override covers a package when it pins at or above the patched version.
-  const covers = (name: string, patched: string): boolean =>
-    Object.entries(overrides).some(
-      ([key, pinned]) => overrideTarget(key) === name && satisfiesFloor(pinned, patched)
-    );
+  // Whether the tree is genuinely patched, read from the lockfile rather than inferred
+  // from the override keys.
+  //
+  // Matching by override name alone is wrong, and hid a real advisory: `uuid@11` pins only
+  // the uuid 11 line, while `@google-cloud/*` still pulls 8.3.2, 9.0.1 and 10.0.0 — all
+  // below the 11.1.1 the advisory is fixed in. An override only covers what it resolves.
+  const covers = (name: string, patched: string): boolean => {
+    const installed = installedVersions(name);
+    return installed.length > 0 && installed.every((version) => satisfiesFloor(version, patched));
+  };
 
   // A blocker owns a package by exact name or by `@scope/` prefix.
   const ownedBy = (name: string): Blocker | undefined =>
@@ -479,12 +507,20 @@ function scanAdvisories(
       const existing = uncovered.get(entry.name);
       if (existing !== undefined && satisfiesFloor(existing.patched, patched)) continue;
 
+      const installed = [...new Set(installedVersions(entry.name))];
+      const patchedMajor = parseVersion(patched)?.major;
+      const crossMajor = installed.some(
+        (version) => (parseVersion(version)?.major ?? -1) !== patchedMajor
+      );
+
       uncovered.set(entry.name, {
         name: entry.name,
         severity: advisory.severity,
         scope: dependencyScope(entry.name),
         patched,
         summary: advisory.title,
+        installed,
+        crossMajor,
       });
     }
   }
@@ -513,10 +549,7 @@ async function main(): Promise<void> {
   const dead = findDeadOverrides(overrides);
 
   console.error('Checking advisories…');
-  const advisories = scanAdvisories(
-    overrides,
-    holding.map(({ blocker }) => blocker)
-  );
+  const advisories = scanAdvisories(holding.map(({ blocker }) => blocker));
 
   const actionable =
     unblocked.length > 0 || dead.length > 0 || (advisories?.uncovered.length ?? 0) > 0;
@@ -545,20 +578,46 @@ async function main(): Promise<void> {
     lines.push('### 🔒 Advisories', '');
     lines.push('Skipped — `npm audit` produced no readable output. Run it by hand to check.', '');
   } else if (advisories.uncovered.length > 0) {
+    const safe = advisories.uncovered.filter((advisory) => !advisory.crossMajor);
+    const risky = advisories.uncovered.filter((advisory) => advisory.crossMajor);
+
     lines.push('### 🔒 Advisories an override would fix', '');
-    lines.push(
-      'These are not blocked by anything. Add them to `overrides` in `package.json`, ' +
-        'keeping each pin inside the major already in the tree:',
-      ''
-    );
-    lines.push('| package | severity | scope | pin to |', '|---|---|---|---|');
-    for (const advisory of advisories.uncovered) {
+
+    if (safe.length > 0) {
       lines.push(
-        `| \`${advisory.name}\` | ${advisory.severity} | ${advisory.scope} | \`^${advisory.patched}\` |`
+        'Safe to pin — the fix is inside a major already in the tree, so nothing changes ' +
+          'semantically. Add to `overrides` in `package.json`:',
+        ''
       );
+      lines.push('| package | severity | scope | in tree | pin to |', '|---|---|---|---|---|');
+      for (const advisory of safe) {
+        lines.push(
+          `| \`${advisory.name}\` | ${advisory.severity} | ${advisory.scope} | ` +
+            `${advisory.installed.join(', ')} | \`^${advisory.patched}\` |`
+        );
+      }
+      lines.push('', 'Then:', '');
+      lines.push('```sh', 'npm install', 'npm run check:lockfile', 'npm run test:run', '```', '');
     }
-    lines.push('', 'Then:', '');
-    lines.push('```sh', 'npm install', 'npm run check:lockfile', 'npm run test:run', '```', '');
+
+    if (risky.length > 0) {
+      lines.push('#### Needs a judgement call', '');
+      lines.push(
+        'For these the fix lands in a major the tree does not have, so an override would ' +
+          'drag its consumers across a major boundary and can break them. Do not pin these ' +
+          'blindly — check what depends on them (`npm ls <package>`) and whether the ' +
+          'consumers work on the newer major first.',
+        ''
+      );
+      lines.push('| package | severity | scope | in tree | fixed in |', '|---|---|---|---|---|');
+      for (const advisory of risky) {
+        lines.push(
+          `| \`${advisory.name}\` | ${advisory.severity} | ${advisory.scope} | ` +
+            `${advisory.installed.join(', ')} | ${advisory.patched} |`
+        );
+      }
+      lines.push('');
+    }
   }
 
   if (dead.length > 0) {
