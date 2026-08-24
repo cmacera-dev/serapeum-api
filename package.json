@@ -64,7 +64,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.52.1",
     "@opentelemetry/sdk-trace-node": "^1.25.1",
     "@tavily/core": "^0.7.7",
-    "@vercel/functions": "^3.7.5",
+    "@vercel/functions": "^3.9.5",
     "axios": "^1.19.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
