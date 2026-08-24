@@ -172,6 +172,54 @@ rather than regenerating the lockfile.
 
 ---
 
+## Request handling
+
+`src/app.ts` wires the Express layer. Order matters — Express matches in registration order.
+
+### Rate limiting
+
+Authentication answers "who are you", not "how often". Every flow is behind a Supabase JWT,
+but one authenticated user looping `/orchestratorFlow` costs real money, so there are two
+layers in [src/middleware/rateLimit.ts](src/middleware/rateLimit.ts):
+
+| limiter | keyed on | counts failures | default |
+|---|---|---|---|
+| `ipBackstop` | address | yes | 600 / 15 min |
+| `userLimiter` | JWT `sub` | no | 200 / 15 min |
+| `expensiveLimiter` | JWT `sub` | no | 30 / 5 min |
+
+`expensiveLimiter` guards `/orchestratorFlow`, `/searchAll` and `/searchWeb` — the calls
+that hit a model or fan out across several catalogs.
+
+The per-user key comes from decoding the bearer token **without verifying it**; verification
+happens later in the Genkit context provider. That is safe because a forged `sub` cannot buy
+budget (the request 401s downstream and never reaches an upstream API) and cannot drain
+somebody else's either, since `skipFailedRequests` means the 401 is not counted. Raw volume
+is `ipBackstop`'s job, and it counts everything.
+
+`app.set('trust proxy', 1)` is required: Vercel puts one proxy in front, and without it every
+caller looks like the proxy and the address bucket collapses into one. A specific hop count,
+not `true`, which would trust a spoofed `X-Forwarded-For`.
+
+All thresholds are overridable by env var — see `.env.example`.
+
+### Errors
+
+[src/middleware/errors.ts](src/middleware/errors.ts) adds a JSON 404 and a terminal error
+handler. Genkit's `expressHandler` deals with errors inside a flow; these cover everything
+else. The handler logs the real error and returns a generic message — the only detail passed
+back is "your JSON was malformed", which is useful and gives nothing away.
+
+### Configuration
+
+Both entrypoints (`src/index.ts` standalone, `api/index.ts` on Vercel) parse env through
+[src/lib/env.ts](src/lib/env.ts). They used to do it separately and had already drifted.
+A missing `CORS_ORIGINS` in production raises `ConfigError` rather than defaulting to `*`;
+the standalone server logs and exits, while the serverless entrypoint lets it propagate,
+because `process.exit` in a function kills the invocation without surfacing the cause.
+
+---
+
 ## Health check & Supabase keep-alive
 
 `GET /health` (public, no auth) pings Supabase Postgres via `${SUPABASE_URL}/rest/v1/query_cache?select=key&limit=1` to keep the project active on the free tier — Supabase pauses projects after 7 days without database activity (Auth hits do not count).
