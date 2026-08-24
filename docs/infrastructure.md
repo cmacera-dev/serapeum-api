@@ -19,11 +19,22 @@ database.
 | Sentry | crash reporting | app |
 | Langfuse | tracing for the Genkit flows | api |
 
-`serapeum-api` deploys through GitHub Actions with `VERCEL_TOKEN`;
-`serapeum-landing` deploys through Vercel's own GitHub integration and has no
-Actions secrets at all. That is why a broken Git connection shows up differently
-in each: the API's release job fails loudly, the landing site simply stops
-receiving deployments.
+**Both repositories deploy through the Vercel CLI from GitHub Actions**, not
+through Vercel's Git integration, and neither is Git-connected on the Vercel
+side. That is deliberate rather than incidental: Vercel does not support
+connecting a Hobby-plan project to a repository owned by a GitHub organisation,
+and these repositories live in one. The CLI authenticates with a token, so the
+restriction does not apply.
+
+`serapeum-api` deploys on a `v*.*.*` tag; `serapeum-landing` deploys on every
+push to `main`. Each holds `VERCEL_TOKEN`, `VERCEL_ORG_ID` and
+`VERCEL_PROJECT_ID` as Actions secrets.
+
+Leaving a project Git-connected as well would make one push deploy twice, which
+is why the connection is off and the Vercel GitHub App is not installed. The
+cost is real and worth knowing: there are no per-pull-request preview
+deployments and no deployment status on commits. A preview job using
+`npx vercel --yes` would bring the first of those back.
 
 ## Data and model providers
 
