@@ -1,0 +1,78 @@
+name: Docker
+
+# Nothing built this image, which is how it ended up unable to build *or* run while CI
+# stayed green for months. Path-filtered so it only costs time on changes that could
+# plausibly break it.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'src/**'
+      - 'packages/**'
+      - 'prompts/**'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-boot:
+    name: Build and boot
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t serapeum-api:ci .
+
+      # Building proves the image compiles; it does not prove the container serves a
+      # request. It previously did the first and failed the second, because the prompts
+      # were never copied in, so this boots it and checks real responses.
+      - name: Boot the container
+        run: |
+          docker run -d --name serapeum-ci -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e CORS_ORIGINS=https://serapeum.app \
+            -e GOOGLE_GENAI_API_KEY=dummy-key-for-boot-check \
+            -e GEMINI_MODEL=gemini-2.5-flash \
+            -e AI_PROVIDER=google \
+            serapeum-api:ci
+
+          for attempt in $(seq 1 30); do
+            if curl -sf -o /dev/null "http://localhost:3000/nope" \
+              || [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/nope)" = "404" ]; then
+              echo "Container is serving after ${attempt}s."
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Container never served a request."
+          docker logs serapeum-ci
+          exit 1
+
+      # A 404 in the API's own JSON shape means Express started, the routes registered and
+      # every module imported cleanly — including the prompt registration that reads
+      # promptDir from disk, which is the part that used to be missing from the image.
+      - name: Check it answers in the API's JSON shape
+        run: |
+          body="$(curl -s http://localhost:3000/nope)"
+          echo "$body"
+          echo "$body" | grep -q '"error":"not_found"' || {
+            echo "Unexpected body — the app is not the one serving."
+            docker logs serapeum-ci
+            exit 1
+          }
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker logs serapeum-ci || true
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f serapeum-ci || true
