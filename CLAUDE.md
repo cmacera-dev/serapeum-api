@@ -104,6 +104,30 @@ All checks run against `src/` only. Must pass before merge:
 
 ---
 
+## GitHub Actions conventions
+
+**Actions are pinned to a commit SHA, never a tag.** A tag is mutable: whoever compromises
+an action's repository can repoint `v7` at malicious code and it runs in CI with access to
+the secrets. This is not hypothetical — it happened to `tj-actions/changed-files` in 2025.
+
+```yaml
+uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+```
+
+Keep the tag in a trailing comment: it is what makes the line readable, and it is how
+Dependabot knows which release the SHA corresponds to, so updates keep flowing.
+`sha_pinning_required` is enabled on the repo, so a tag reference is rejected outright.
+
+**Every workflow declares `permissions:`.** The repo default is `read`, but declaring it
+per workflow means a change to that default cannot silently widen them.
+
+`ci.yml` also runs `dependency-review`, which fails a PR that introduces a high-severity
+dependency vulnerability — Dependabot only reports one already in the tree. It is set to
+`fail-on-severity: high` on purpose: every advisory here is transitive and pinned through
+`overrides`, so failing on moderate would block every PR on issues already handled.
+
+---
+
 ## Dependency & security maintenance
 
 Everything held back is held back for a reason, and every reason expires eventually. Two

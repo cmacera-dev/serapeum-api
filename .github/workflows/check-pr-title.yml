@@ -7,12 +7,17 @@ on:
       - edited
       - synchronize
 
+# Least privilege, declared explicitly: the repo default is currently `read`, but a
+# change to that default must not silently widen what these workflows can do.
+permissions:
+  contents: read
+
 jobs:
   check-title:
     name: Check PR Title
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             if (context.payload.pull_request.user.login === 'dependabot[bot]') {
