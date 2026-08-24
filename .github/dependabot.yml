@@ -28,6 +28,12 @@ updates:
       # npm ci fails with ERESOLVE until that range is widened for TypeScript 7.
       - dependency-name: "typescript"
         versions: [">=7"]
+      # Held at the Node major this project actually runs (engines.node, and node-version
+      # in ci.yml). Newer type definitions describe APIs that do not exist on the runtime,
+      # so tsc would happily accept code that crashes in production. Raise this in step
+      # with the runtime, not ahead of it — check:blockers flags the mismatch.
+      - dependency-name: "@types/node"
+        versions: [">=23"]
     reviewers:
       - "cmacera"
     labels:

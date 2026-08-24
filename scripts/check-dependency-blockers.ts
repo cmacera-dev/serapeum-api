@@ -21,6 +21,7 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import * as yaml from 'yaml';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -175,6 +176,24 @@ function declaredFloor(upstream: string, dependency: string): string | null {
   return deps?.[dependency] ?? null;
 }
 
+/**
+ * Node major this project actually runs, read from ci.yml rather than hardcoded so the two
+ * cannot drift apart silently.
+ */
+function runtimeNodeMajor(): number | null {
+  const workflow = yaml.parse(readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8')) as {
+    jobs?: Record<string, { steps?: { with?: { 'node-version'?: string | number } }[] }>;
+  };
+
+  for (const job of Object.values(workflow.jobs ?? {})) {
+    for (const step of job.steps ?? []) {
+      const declared = step.with?.['node-version'];
+      if (declared !== undefined) return Number(String(declared).split('.')[0]);
+    }
+  }
+  return null;
+}
+
 const blockers: Blocker[] = [
   {
     id: 'zod-v4',
@@ -266,6 +285,33 @@ const blockers: Blocker[] = [
       return {
         resolved: !satisfiesFloor('2.0.1', latest),
         detail: `latest published \`extract-zip\` is ${latest}`,
+      };
+    },
+  },
+  {
+    id: 'types-node-alignment',
+    title: '@types/node is held at the Node major this project runs',
+    waitingOn: 'the runtime moving to a newer Node major',
+    owns: ['@types/node'],
+    action: [
+      'Raise the `@types/node` devDependency to match the new runtime major',
+      'Raise the `@types/node` ignore rule in `.github/dependabot.yml` to match',
+    ],
+    check(): BlockerStatus {
+      // Not a real blocker so much as a deliberate pin: type definitions ahead of the
+      // runtime let tsc accept APIs that do not exist in production. This turns "the
+      // runtime moved and nobody updated the types" into an actionable report.
+      const runtime = runtimeNodeMajor();
+      const declared = readPackageJson().devDependencies?.['@types/node'];
+      const types =
+        declared === undefined ? null : parseVersion(`${declared.replace(/\D*/, '')}.0.0`);
+
+      if (runtime === null || types === null) {
+        return { resolved: false, detail: 'could not compare `@types/node` with the CI runtime' };
+      }
+      return {
+        resolved: types.major !== runtime,
+        detail: `CI runs Node ${runtime} and \`@types/node\` is \`${declared ?? '?'}\``,
       };
     },
   },
