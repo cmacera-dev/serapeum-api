@@ -146,6 +146,7 @@ overrides.
 | `@opentelemetry/*` 2.x | `@genkit-ai/core` moving off `@opentelemetry/sdk-node@^0.52` |
 | `typescript` 7 | `@typescript-eslint` widening `peer typescript@">=4.8.4 <6.1.0"` |
 | `extract-zip` | any release newer than 2.0.1 (unmaintained since 2023) |
+| `@types/node` | the runtime moving off Node 22 — types must never run ahead of the runtime, or `tsc` accepts APIs that crash in production |
 
 ### Transitive advisories
 
