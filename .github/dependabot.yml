@@ -20,6 +20,10 @@ updates:
         versions: [">=0.53"]
       - dependency-name: "@opentelemetry/sdk-trace-node"
         versions: [">1.25.x"]
+      # Blocked by @typescript-eslint declaring peer typescript@">=4.8.4 <6.1.0";
+      # npm ci fails with ERESOLVE until that range is widened for TypeScript 7.
+      - dependency-name: "typescript"
+        versions: [">=7"]
     reviewers:
       - "cmacera"
     labels:
