@@ -25,6 +25,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
+    "check:lockfile": "node --import tsx/esm scripts/check-lockfile.ts",
+    "check:blockers": "node --import tsx/esm scripts/check-dependency-blockers.ts",
     "eval:compare": "node --import tsx/esm scripts/evalCompare.ts",
     "compare:evals": "node --import tsx/esm scripts/compareEvals.ts",
     "generate:openapi": "node --import tsx/esm scripts/generate-openapi.ts",

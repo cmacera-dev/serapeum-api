@@ -100,7 +100,66 @@ All checks run against `src/` only. Must pass before merge:
 | `test:run` | `vitest run` (excludes e2e) |
 | `build` | `tsc && cp -r src/locales dist/` |
 | `format:check` | `prettier --check "src/**/*.ts"` |
-| `check-pr-title` | PR title must start with `[DEV-XX]` or `DEV-XX` |
+| `check-pr-title` | PR title must be Conventional Commits — **no** `[DEV-XX]` prefix; issues are linked with `Closes #123` in the body. Skipped for Dependabot PRs |
+| `check:lockfile` | `package-lock.json` is internally consistent (runs inside `test`) |
+
+---
+
+## Dependency & security maintenance
+
+Everything held back is held back for a reason, and every reason expires eventually. Two
+scripts keep that from rotting silently.
+
+```bash
+npm run check:blockers    # are the upstream blockers still real? any advisory uncovered?
+npm run check:lockfile    # is package-lock.json internally consistent?
+```
+
+### The weekly watchdog
+
+`check-dependency-blockers.yml` runs [scripts/check-dependency-blockers.ts](scripts/check-dependency-blockers.ts)
+every Monday and answers three questions:
+
+1. **Blockers** — re-tests each reason we pin something, against the live npm registry.
+   `typescript-7` is checked *empirically*: it resolves the real dependency set with
+   `typescript@^7` and sees whether npm errors, rather than parsing peer ranges.
+2. **Dead overrides** — `overrides` entries naming a package no longer in the tree.
+   It deliberately does **not** flag overrides whose package already resolves above the
+   pin. Those are insurance, not dead weight: the pin is what keeps the tree patched when
+   a future `npm install` reshuffles it.
+3. **Advisories** — open Dependabot alerts an override would fix. Advisories owned by a
+   still-holding blocker are excluded, because "just override `@opentelemetry/*`" would
+   break genkit outright.
+
+Output goes to the run summary, and to a single self-managing issue labelled
+`dependency-status`: it opens when there is work and closes itself when there is not.
+
+To add a blocker, append one object to the `blockers` array in the script. Give it an
+`owns` list so its advisories are attributed to it instead of being recommended as
+overrides.
+
+### Current blockers
+
+| Blocked | Waiting on |
+|---|---|
+| `zod` v4, `@asteasolutions/zod-to-openapi` v8 | `@genkit-ai/core` moving off `zod@^3` |
+| `@opentelemetry/*` 2.x | `@genkit-ai/core` moving off `@opentelemetry/sdk-node@^0.52` |
+| `typescript` 7 | `@typescript-eslint` widening `peer typescript@">=4.8.4 <6.1.0"` |
+| `extract-zip` | any release newer than 2.0.1 (unmaintained since 2023) |
+
+### Transitive advisories
+
+Every Dependabot alert on this repo is transitive, so Dependabot cannot fix any of them —
+it only opens PRs for direct dependencies. The remedy is `overrides` in `package.json`,
+pinned inside the major already in the tree. Packages resolving to several majors use the
+scoped `"name@major"` key form so each line is patched independently.
+
+### Lockfile gotcha
+
+`npm install` on macOS arm64 prunes `@emnapi/core` and `@emnapi/runtime`, which
+`@rolldown/binding-wasm32-wasi` depends on and Linux CI needs. `npm run check:lockfile`
+catches it, and CI runs it — but if it fires locally, restore the entries from `main`
+rather than regenerating the lockfile.
 
 ---
 
