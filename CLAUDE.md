@@ -127,9 +127,11 @@ every Monday and answers three questions:
    It deliberately does **not** flag overrides whose package already resolves above the
    pin. Those are insurance, not dead weight: the pin is what keeps the tree patched when
    a future `npm install` reshuffles it.
-3. **Advisories** — open Dependabot alerts an override would fix. Advisories owned by a
-   still-holding blocker are excluded, because "just override `@opentelemetry/*`" would
-   break genkit outright.
+3. **Advisories** — vulnerabilities an override would fix, read from `npm audit` (the
+   Dependabot alerts API rejects the Actions `GITHUB_TOKEN`, so it needs no credentials
+   and works locally too). The patched version comes from the advisory's own `<x.y.z`
+   upper bound. Advisories owned by a still-holding blocker are excluded, because "just
+   override `@opentelemetry/*`" would break genkit outright.
 
 Output goes to the run summary, and to a single self-managing issue labelled
 `dependency-status`: it opens when there is work and closes itself when there is not.

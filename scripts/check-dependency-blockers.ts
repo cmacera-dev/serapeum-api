@@ -365,11 +365,17 @@ interface UncoveredAdvisory {
   summary: string;
 }
 
-interface DependabotAlert {
-  state: string;
-  dependency: { package: { name: string }; scope: string | null };
-  security_advisory: { severity: string; summary: string };
-  security_vulnerability: { first_patched_version: { identifier: string } | null };
+interface AuditAdvisory {
+  severity: string;
+  /** Vulnerable range, e.g. `<4.7.9`. The upper bound is the patched version. */
+  range: string;
+  title: string;
+}
+
+interface AuditEntry {
+  name: string;
+  severity: string;
+  via: (string | AuditAdvisory)[];
 }
 
 interface AdvisoryScan {
@@ -380,7 +386,32 @@ interface AdvisoryScan {
 }
 
 /**
- * Ask GitHub which advisories are still open, then subtract two groups:
+ * First version an advisory is fixed in.
+ *
+ * Advisory ranges are written as `<4.7.9`, so the exclusive upper bound *is* the patched
+ * release. Ranges without one (`*`, `>=1.0.0`) mean no fix has shipped — `extract-zip` is
+ * the standing example — so there is nothing to pin to.
+ */
+function patchedVersion(range: string): string | null {
+  const match = /<\s*(\d+\.\d+\.\d+)/.exec(range);
+  return match?.[1] ?? null;
+}
+
+/** Whether every copy of a package in the lockfile is dev-only, for prioritisation. */
+function dependencyScope(name: string): string {
+  const lock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8')) as {
+    packages: Record<string, { dev?: boolean }>;
+  };
+
+  const copies = Object.entries(lock.packages).filter(([path]) =>
+    path.endsWith(`node_modules/${name}`)
+  );
+  if (copies.length === 0) return 'unknown';
+  return copies.every(([, entry]) => entry.dev === true) ? 'development' : 'runtime';
+}
+
+/**
+ * Read advisories from `npm audit` and subtract two groups:
  *
  *   - those an override already covers, and
  *   - those owned by a blocker that is still holding.
@@ -389,30 +420,31 @@ interface AdvisoryScan {
  * "just add an `@opentelemetry/*` override" would break genkit outright. Recommending it
  * would be worse than saying nothing, so those advisories are counted under their blocker.
  *
- * Returns null when the token cannot read Dependabot alerts, so the report can say so
- * instead of quietly claiming everything is clean.
+ * `npm audit` is used rather than the Dependabot alerts API on purpose: that API rejects
+ * the Actions GITHUB_TOKEN, and requiring a PAT to see your own vulnerabilities is a
+ * mechanism that stops working the day the PAT expires. This reads the lockfile and needs
+ * no credentials, so it also works when run locally.
  */
-async function scanAdvisories(
+function scanAdvisories(
   overrides: Record<string, string>,
   holding: Blocker[]
-): Promise<AdvisoryScan | null> {
-  const token = process.env['GITHUB_TOKEN'];
-  const repository = process.env['GITHUB_REPOSITORY'];
-  if (token === undefined || repository === undefined) return null;
+): AdvisoryScan | null {
+  let raw: string;
+  try {
+    // npm audit exits non-zero whenever it finds anything, so the output is on the error.
+    raw = execFileSync('npm', ['audit', '--json'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch (error) {
+    const stdout = (error as { stdout?: string }).stdout;
+    if (stdout === undefined || stdout.trim() === '') return null;
+    raw = stdout;
+  }
 
-  const response = await fetch(
-    `https://api.github.com/repos/${repository}/dependabot/alerts?state=open&per_page=100`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    }
-  );
-  if (!response.ok) return null;
-
-  const alerts = (await response.json()) as DependabotAlert[];
+  const report = JSON.parse(raw) as { vulnerabilities?: Record<string, AuditEntry> };
+  const entries = Object.values(report.vulnerabilities ?? {});
 
   // An override covers a package when it pins at or above the patched version.
   const covers = (name: string, patched: string): boolean =>
@@ -429,28 +461,32 @@ async function scanAdvisories(
   const uncovered = new Map<string, UncoveredAdvisory>();
   const suppressed = new Map<string, number>();
 
-  for (const alert of alerts) {
-    const patched = alert.security_vulnerability.first_patched_version?.identifier;
-    const name = alert.dependency.package.name;
-    if (patched === undefined || covers(name, patched)) continue;
+  for (const entry of entries) {
+    // Entries whose `via` is all strings are downstream fallout, not advisories of their own.
+    const advisories = entry.via.filter((via): via is AuditAdvisory => typeof via === 'object');
 
-    const owner = ownedBy(name);
-    if (owner !== undefined) {
-      suppressed.set(owner.id, (suppressed.get(owner.id) ?? 0) + 1);
-      continue;
+    for (const advisory of advisories) {
+      const patched = patchedVersion(advisory.range);
+      if (patched === null || covers(entry.name, patched)) continue;
+
+      const owner = ownedBy(entry.name);
+      if (owner !== undefined) {
+        suppressed.set(owner.id, (suppressed.get(owner.id) ?? 0) + 1);
+        continue;
+      }
+
+      // Keep the highest patched floor per package so the suggested pin is sufficient.
+      const existing = uncovered.get(entry.name);
+      if (existing !== undefined && satisfiesFloor(existing.patched, patched)) continue;
+
+      uncovered.set(entry.name, {
+        name: entry.name,
+        severity: advisory.severity,
+        scope: dependencyScope(entry.name),
+        patched,
+        summary: advisory.title,
+      });
     }
-
-    // Keep the highest patched floor per package so the suggested override is sufficient.
-    const existing = uncovered.get(name);
-    if (existing !== undefined && satisfiesFloor(existing.patched, patched)) continue;
-
-    uncovered.set(name, {
-      name,
-      severity: alert.security_advisory.severity,
-      scope: alert.dependency.scope ?? 'unknown',
-      patched,
-      summary: alert.security_advisory.summary,
-    });
   }
 
   const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, moderate: 2, low: 3 };
@@ -477,7 +513,7 @@ async function main(): Promise<void> {
   const dead = findDeadOverrides(overrides);
 
   console.error('Checking advisories…');
-  const advisories = await scanAdvisories(
+  const advisories = scanAdvisories(
     overrides,
     holding.map(({ blocker }) => blocker)
   );
@@ -507,11 +543,7 @@ async function main(): Promise<void> {
 
   if (advisories === null) {
     lines.push('### 🔒 Advisories', '');
-    lines.push(
-      'Skipped — the available token cannot read Dependabot alerts. Grant the workflow ' +
-        '`security-events: read`, or run `npm audit` by hand.',
-      ''
-    );
+    lines.push('Skipped — `npm audit` produced no readable output. Run it by hand to check.', '');
   } else if (advisories.uncovered.length > 0) {
     lines.push('### 🔒 Advisories an override would fix', '');
     lines.push(
