@@ -14,7 +14,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-      security-events: read
 
     steps:
       - name: Checkout code
@@ -29,10 +28,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Reads advisories from `npm audit`, so no token is needed here. The Dependabot
+      # alerts API rejects GITHUB_TOKEN outright, and requiring a PAT to see your own
+      # vulnerabilities is a mechanism that breaks the day the PAT expires.
       - name: Check blockers, overrides and advisories
         id: check
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run check:blockers
 
       - name: Publish report to the run summary
