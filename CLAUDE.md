@@ -226,6 +226,30 @@ not `true`, which would trust a spoofed `X-Forwarded-For`.
 
 All thresholds are overridable by env var — see `.env.example`.
 
+### Authentication
+
+Every flow route sits behind `requireAuth` in
+[src/middleware/verifyJwt.ts](src/middleware/verifyJwt.ts), mounted *ahead* of
+`expressHandler` rather than relying on Genkit's `contextProvider` to reject the request.
+
+That is not a style choice. Genkit picks the HTTP status with `getHttpStatus(e)`, which
+returns 401 only when the error is `instanceof` **its own** `GenkitError`. Genkit ships a
+dual build — `lib/index.mjs` for `import`, `lib/index.js` for `require` — so the class this
+ESM code throws is a different object from the one CommonJS `@genkit-ai/express` compares
+against. The check fails silently, falls through to the unknown-error branch, and every
+rejected token came back as `500 {"message":"Internal Error","status":"INTERNAL"}` while the
+log said `UNAUTHENTICATED`. A client cannot tell "refresh your session" from "the server is
+down", and authentication noise buries real 5xx in monitoring.
+
+The `contextProvider` is still wired, and still verifies. It is no longer what answers the
+caller — it populates flow context, and it is the reason a route mounted without
+`requireAuth` fails closed rather than open.
+
+**Assertions about auth belong at the HTTP layer.** The unit tests always asserted the
+correct thrown error, and were green throughout. Only a test that reads a status code off a
+real socket can catch this class of bug — see
+[tests/integration/http/auth.test.ts](tests/integration/http/auth.test.ts).
+
 ### Errors
 
 [src/middleware/errors.ts](src/middleware/errors.ts) adds a JSON 404 and a terminal error

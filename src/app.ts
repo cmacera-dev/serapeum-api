@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { expressHandler } from '@genkit-ai/express';
 
-import { jwtContextProvider } from './middleware/verifyJwt.js';
+import { jwtContextProvider, requireAuth } from './middleware/verifyJwt.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { expensiveLimiter, ipBackstop, userLimiter } from './middleware/rateLimit.js';
 import { checkSupabaseHealth } from './lib/health.js';
@@ -45,20 +45,28 @@ export function createApp(corsOrigins: string[] | string): express.Express {
     res.status(code).json({ status: 'error', error: result.error, timestamp });
   });
 
+  // `requireAuth` runs first and owns the HTTP answer for a rejected token; `expressHandler`
+  // only ever sees requests that already carry a valid one. See verifyJwt.ts for why the
+  // status code cannot be left to Genkit.
   const protect = { contextProvider: jwtContextProvider };
 
   // One upstream API per call.
-  app.post('/searchMedia', userLimiter, expressHandler(searchMedia, protect));
-  app.post('/searchBooks', userLimiter, expressHandler(searchBooks, protect));
-  app.post('/searchGames', userLimiter, expressHandler(searchGames, protect));
-  app.post('/getMovieDetail', userLimiter, expressHandler(getMovieDetail, protect));
-  app.post('/getTvDetail', userLimiter, expressHandler(getTvDetail, protect));
-  app.post('/feedback', userLimiter, expressHandler(feedbackFlow, protect));
+  app.post('/searchMedia', userLimiter, requireAuth, expressHandler(searchMedia, protect));
+  app.post('/searchBooks', userLimiter, requireAuth, expressHandler(searchBooks, protect));
+  app.post('/searchGames', userLimiter, requireAuth, expressHandler(searchGames, protect));
+  app.post('/getMovieDetail', userLimiter, requireAuth, expressHandler(getMovieDetail, protect));
+  app.post('/getTvDetail', userLimiter, requireAuth, expressHandler(getTvDetail, protect));
+  app.post('/feedback', userLimiter, requireAuth, expressHandler(feedbackFlow, protect));
 
   // Model calls, or a fan-out across several catalog APIs.
-  app.post('/searchAll', expensiveLimiter, expressHandler(searchAll, protect));
-  app.post('/searchWeb', expensiveLimiter, expressHandler(searchWeb, protect));
-  app.post('/orchestratorFlow', expensiveLimiter, expressHandler(orchestratorFlow, protect));
+  app.post('/searchAll', expensiveLimiter, requireAuth, expressHandler(searchAll, protect));
+  app.post('/searchWeb', expensiveLimiter, requireAuth, expressHandler(searchWeb, protect));
+  app.post(
+    '/orchestratorFlow',
+    expensiveLimiter,
+    requireAuth,
+    expressHandler(orchestratorFlow, protect)
+  );
 
   // Both must come last: Express matches in registration order.
   app.use(notFoundHandler);
