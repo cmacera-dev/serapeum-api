@@ -20,10 +20,19 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/types.ts',
         '**/*-types.ts',
+        // The Genkit eval harness: scorers driven by `npm run eval:compare` against the
+        // datasets in .genkit/, never by the request path. It entered this report only
+        // because app.ts registers the evaluators at import; measuring it here would
+        // rebase the ratchet below on code the suite was never calibrated against.
+        'src/evals/**',
       ],
       // A ratchet, not a target. Set just below the numbers the suite actually produced
       // the first time coverage ran, so it catches a regression without failing today.
       // Raise them when the real figures move up; never lower them to make a build pass.
+      //
+      // Read these off CI, never off a local run: CI is on Node 22 and reports files a
+      // newer local Node leaves out of the table entirely, so the two disagree by whole
+      // points. A local figure is not evidence the ratchet can move.
       thresholds: {
         statements: 82,
         branches: 70,

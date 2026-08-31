@@ -17,13 +17,17 @@ interface ErrorBody {
   timestamp: string;
 }
 
-function body(error: string, message: string): ErrorBody {
+/**
+ * Builds that shape. Exported so every handler that answers outside a flow — including
+ * `requireAuth`, which rejects before the flow is ever reached — produces the same body.
+ */
+export function errorBody(error: string, message: string): ErrorBody {
   return { status: 'error', error, message, timestamp: new Date().toISOString() };
 }
 
 /** Answers unknown routes as JSON, since every other response on this API is JSON. */
 export function notFoundHandler(req: Request, res: Response): void {
-  res.status(404).json(body('not_found', `No route matches ${req.method} ${req.path}.`));
+  res.status(404).json(errorBody('not_found', `No route matches ${req.method} ${req.path}.`));
 }
 
 /**
@@ -49,10 +53,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, next: N
     err instanceof SyntaxError && 'body' in err && (err as { status?: number }).status === 400;
 
   if (isMalformedJson) {
-    res.status(400).json(body('invalid_json', 'Request body is not valid JSON.'));
+    res.status(400).json(errorBody('invalid_json', 'Request body is not valid JSON.'));
     return;
   }
 
   console.error('Unhandled error:', err);
-  res.status(500).json(body('internal_error', 'An unexpected error occurred.'));
+  res.status(500).json(errorBody('internal_error', 'An unexpected error occurred.'));
 }
