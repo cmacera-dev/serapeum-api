@@ -4,7 +4,7 @@ import { jwtVerify, createRemoteJWKSet, errors as joseErrors, type JWTPayload } 
 // Cache for remote JWKS instances to avoid recreating and fetching on every call
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-function getJwksForIssuer(issuer: string) {
+function getJwksForIssuer(issuer: string): ReturnType<typeof createRemoteJWKSet> {
   let jwks = jwksCache.get(issuer);
   if (!jwks) {
     const jwksUrl = new URL(`${issuer}/.well-known/jwks.json`);
