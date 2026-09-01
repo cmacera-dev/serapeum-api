@@ -72,18 +72,25 @@ export const searchTavilyTool = ai.defineTool(
       const status = err?.status || err?.response?.status;
 
       if (status === 401) {
-        throw new Error('Tavily API authentication failed. Please check your API key.');
+        throw new Error('Tavily API authentication failed. Please check your API key.', {
+          cause: error,
+        });
       } else if (status === 429) {
-        throw new Error('Tavily API rate limit exceeded. Please try again later.');
+        throw new Error('Tavily API rate limit exceeded. Please try again later.', {
+          cause: error,
+        });
       } else if (status === 503) {
-        throw new Error('Tavily API service unavailable (503). Please try again later.');
+        throw new Error('Tavily API service unavailable (503). Please try again later.', {
+          cause: error,
+        });
       } else if (err.message?.includes('network') || err.code === 'ECONNREFUSED') {
         throw new Error(
-          'Network error: Unable to reach Tavily API. Please check your internet connection.'
+          'Network error: Unable to reach Tavily API. Please check your internet connection.',
+          { cause: error }
         );
       }
 
-      throw new Error(`Tavily API error: ${err?.message || 'Unknown error'}`);
+      throw new Error(`Tavily API error: ${err?.message || 'Unknown error'}`, { cause: error });
     }
   }
 );

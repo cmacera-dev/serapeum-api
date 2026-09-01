@@ -89,7 +89,7 @@ export const synthesizerFeaturedMentionEvaluator = ai.defineEvaluator(
       };
     }
 
-    let apiData: ApiDetails | null = null;
+    let apiData: ApiDetails;
     try {
       apiData = JSON.parse(input.apiDetails) as ApiDetails;
     } catch {
