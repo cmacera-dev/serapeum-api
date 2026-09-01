@@ -45,8 +45,14 @@ updates:
     labels:
       - "dependencies"
       - "automated"
+    # `include: scope` makes Dependabot append its own scope — `(deps)` for production and
+    # `(deps-dev)` for development — so the prefix has to be the bare type. Paired with
+    # `prefix: "chore(deps)"` the two combined into `chore(deps)(deps): bump jose ...`, which
+    # is not a Conventional Commit. Nothing caught it: the title check skips Dependabot, and
+    # auto-merge squashes the title into the commit message, so five of them are already on
+    # main (#282 through #286).
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: "scope"
     groups:
       # Group all non-breaking updates together
