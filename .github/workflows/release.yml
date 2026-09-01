@@ -9,6 +9,11 @@ jobs:
   deploy:
     name: Deploy to Vercel
     runs-on: ubuntu-latest
+    # The environment's deployment rule admits only `v*` tags, so the trigger above is no
+    # longer the single thing between a stray push and production.
+    environment:
+      name: Production
+      url: https://api.serapeum.app
     permissions:
       contents: write
     steps:
