@@ -111,15 +111,22 @@ export async function fetchBookResults(input: {
       if (error.response) {
         const status = error.response.status;
         if (status === 401 || status === 403) {
-          throw new Error('Google Books API authentication failed. Please check your API key.');
+          throw new Error('Google Books API authentication failed. Please check your API key.', {
+            cause: error,
+          });
         } else if (status === 429) {
-          throw new Error('Google Books API rate limit exceeded. Please try again later.');
+          throw new Error('Google Books API rate limit exceeded. Please try again later.', {
+            cause: error,
+          });
         } else {
-          throw new Error(`Google Books API error (${status}): ${error.response.statusText}`);
+          throw new Error(`Google Books API error (${status}): ${error.response.statusText}`, {
+            cause: error,
+          });
         }
       } else if (error.request) {
         throw new Error(
-          'Network error: Unable to reach Google Books API. Please check your internet connection.'
+          'Network error: Unable to reach Google Books API. Please check your internet connection.',
+          { cause: error }
         );
       }
     }

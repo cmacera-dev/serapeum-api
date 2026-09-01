@@ -1,5 +1,6 @@
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 import tsParser from '@typescript-eslint/parser';
-import tsPlugin from '@typescript-eslint/eslint-plugin';
 import prettierPlugin from 'eslint-plugin-prettier';
 
 export default [
@@ -7,6 +8,12 @@ export default [
     {
         ignores: ['dist/**', 'node_modules/**', 'eslint.config.js', 'commitlint.config.js'],
     },
+
+    // The recommended sets, rather than a hand-picked subset. `typescript-eslint` switches
+    // off the core rules that `tsc` already enforces better (no-undef, no-dupe-keys,
+    // no-unreachable), so the two do not fight — what is left is what the compiler cannot see.
+    js.configs.recommended,
+    ...tseslint.configs.recommended,
 
     // TypeScript & Prettier Configuration
     {
@@ -19,19 +26,15 @@ export default [
                 project: './tsconfig.json',
                 tsconfigRootDir: import.meta.dirname,
             },
-            // Globals would go here but we lack the package, so we rely on environment/builtin
         },
         plugins: {
-            '@typescript-eslint': tsPlugin,
             prettier: prettierPlugin,
         },
         rules: {
-            // Replicating recommended rules manually since we can't extend legacy configs easily in flat config without compat utils
-
             // Prettier
             'prettier/prettier': 'error',
 
-            // TypeScript (High Priority)
+            // Project overrides on top of the recommended sets
             '@typescript-eslint/no-explicit-any': 'error',
             '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
             '@typescript-eslint/explicit-function-return-type': 'warn',

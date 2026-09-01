@@ -1,10 +1,7 @@
 import { z } from '@genkit-ai/core';
 import type { GenkitPlugin, GenkitPluginV2 } from 'genkit/plugin';
-// @ts-ignore
 import { googleAI } from '@genkit-ai/google-genai';
-// @ts-ignore
 import { ollama } from 'genkitx-ollama';
-// @ts-ignore
 import { openAI } from 'genkitx-openai';
 
 /**

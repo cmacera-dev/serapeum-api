@@ -65,9 +65,9 @@ export async function getAccessToken(): Promise<string> {
     return cachedToken.token;
   } catch (error) {
     if (error instanceof Error) {
-      throw new Error(`IGDB authentication failed: ${error.message}`);
+      throw new Error(`IGDB authentication failed: ${error.message}`, { cause: error });
     }
-    throw new Error('IGDB authentication failed with unknown error');
+    throw new Error('IGDB authentication failed with unknown error', { cause: error });
   }
 }
 

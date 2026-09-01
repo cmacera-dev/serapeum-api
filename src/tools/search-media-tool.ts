@@ -96,15 +96,22 @@ export async function fetchMediaResults(input: {
       if (error.response) {
         const status = error.response.status;
         if (status === 401) {
-          throw new Error('TMDB API authentication failed. Please check your API key.');
+          throw new Error('TMDB API authentication failed. Please check your API key.', {
+            cause: error,
+          });
         } else if (status === 429) {
-          throw new Error('TMDB API rate limit exceeded. Please try again later.');
+          throw new Error('TMDB API rate limit exceeded. Please try again later.', {
+            cause: error,
+          });
         } else {
-          throw new Error(`TMDB API error (${status}): ${error.response.statusText}`);
+          throw new Error(`TMDB API error (${status}): ${error.response.statusText}`, {
+            cause: error,
+          });
         }
       } else if (error.request) {
         throw new Error(
-          'Network error: Unable to reach TMDB API. Please check your internet connection.'
+          'Network error: Unable to reach TMDB API. Please check your internet connection.',
+          { cause: error }
         );
       }
     }

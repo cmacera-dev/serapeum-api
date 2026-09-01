@@ -86,15 +86,15 @@ export async function fetchGameResults(input: {
   } catch (error) {
     if (error instanceof HttpError) {
       if (error.status === 429)
-        throw new Error('IGDB API rate limit exceeded. Please try again later.');
+        throw new Error('IGDB API rate limit exceeded. Please try again later.', { cause: error });
       throw error;
     }
     if (error instanceof Error) {
       // Re-throw already-classified provider errors unchanged
       if (error.message.startsWith('IGDB')) throw error;
-      throw new Error(`Failed to search games: ${error.message}`);
+      throw new Error(`Failed to search games: ${error.message}`, { cause: error });
     }
-    throw new Error('Failed to search games with unknown error');
+    throw new Error('Failed to search games with unknown error', { cause: error });
   }
 }
 

@@ -333,8 +333,8 @@ export const orchestratorFlow = ai.defineFlow(
           `[orchestratorFlow] Tavily search failed for query "${route.extractedQuery}":`,
           inspect(error, { depth: null, colors: true })
         );
-        // Continue with empty context (or maybe fallback logic could be improved, but this prevents crash)
-        tavilyContext = '';
+        // Continue with the empty context the declaration already provides, rather than
+        // crashing: discovery still works without web results, just less well.
       }
 
       // 2. Extract Titles
