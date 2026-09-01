@@ -33,6 +33,11 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
+      # VERCEL_TOKEN is static on purpose. Vercel's OIDC federation is outbound only —
+      # a deployed Function authenticating to AWS/GCP/Azure — and Vercel has no inbound
+      # federation, so a GitHub identity token cannot be exchanged for deploy credentials.
+      # The mitigation is scope, not federation: keep this token project-scoped (`vcp_`
+      # prefix) and give it an expiry. See CLAUDE.md → Releases, and #278.
       - name: Deploy to Vercel
         run: npx vercel --prod --yes
         env:
