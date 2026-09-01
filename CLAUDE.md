@@ -296,7 +296,37 @@ npm run release:tag        # → tags + pushes; release.yml deploys to Vercel
 
 The `release.yml` workflow re-runs `typecheck` / `lint` / `test:run`, deploys via `vercel --prod`, and creates a GitHub Release with auto-generated notes.
 
-**Required GitHub secrets** (set once): `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`. ORG and PROJECT IDs can be read from `.vercel/project.json` after `vercel link`.
+**Required GitHub secrets** (set once): `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
+ORG and PROJECT IDs are identifiers rather than credentials, and can be read from
+`.vercel/project.json` after `vercel link`.
+
+### Why `VERCEL_TOKEN` is still a static secret
+
+It is the last long-lived credential in this repository, and OIDC cannot remove it. Vercel's
+OIDC federation runs **outbound only** — it lets a deployed Function authenticate to AWS, GCP
+or Azure without storing keys. There is no inbound federation, so an external CI runner
+cannot exchange a GitHub identity token for deploy credentials, and `vercel --prod` from
+Actions still needs a static token. Vercel states this plainly:
+
+> Deployments from GitHub Actions to Vercel still require a static `VERCEL_TOKEN`, which you
+> manage as a standard CI secret.
+
+Checked 2026-09-01 — see #278. Do not spend time wiring `id-token: write`; there is nothing
+on the other side to exchange it with.
+
+What *is* available is scope and expiry, so the token must be **project-scoped**, never Full
+Account. A project-scoped token carries the `vcp_` prefix and is refused on any other
+project, on user-level resources, and on team-level resources — a leak cannot reach the rest
+of the team.
+
+```bash
+vercel tokens add --project <VERCEL_PROJECT_ID>   # minting one needs a full-account token
+```
+
+Give it an expiry. An expired token shows up as a failed release, which is the cheapest
+possible moment to discover it — deploys are tag-driven, so nothing silently ships without it.
+The remaining blast radius is narrowed further by gating the job behind the `Production`
+environment (#279).
 
 ---
 
