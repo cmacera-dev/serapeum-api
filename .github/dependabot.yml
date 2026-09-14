@@ -60,6 +60,14 @@ updates:
         patterns:
           - "@genkit-ai/*"
           - "genkit*"
+      # vitest, @vitest/coverage-v8 and @vitest/ui peer-depend on each other at the same
+      # major version. Left ungrouped, a major bump lands as three separate PRs that each
+      # break `npm ci` with ERESOLVE because the other two stay behind. No update-types
+      # restriction here on purpose, so majors are grouped too, not just minor/patch.
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
       dev-dependencies:
         dependency-type: "development"
         update-types:
