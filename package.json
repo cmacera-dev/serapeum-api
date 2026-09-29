@@ -67,7 +67,7 @@
     "@vercel/functions": "^3.9.9",
     "axios": "^1.20.0",
     "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "genkit": "^1.30.1",
