@@ -771,7 +771,8 @@ components:
           example: 1
         comment:
           type: string
-          description: Optional free-text comment from user
+          maxLength: 2000
+          description: Optional free-text comment from user (max 2000 characters)
       required:
         - traceId
         - score

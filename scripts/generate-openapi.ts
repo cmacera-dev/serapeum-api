@@ -31,6 +31,7 @@ import {
   MovieDetailSchema,
   TvDetailSchema,
 } from '@serapeum/shared-schemas';
+import { FEEDBACK_COMMENT_MAX_LENGTH } from '../src/lib/constants.js';
 
 // Extend Zod with OpenAPI support (must be called before any .openapi() calls)
 extendZodWithOpenApi(z);
@@ -518,7 +519,13 @@ const FeedbackInputSchema = z
     score: z
       .union([z.literal(0), z.literal(1)])
       .openapi({ description: '1 = positive (👍), 0 = negative (👎)', example: 1 }),
-    comment: z.string().optional().openapi({ description: 'Optional free-text comment from user' }),
+    comment: z
+      .string()
+      .max(FEEDBACK_COMMENT_MAX_LENGTH)
+      .optional()
+      .openapi({
+        description: `Optional free-text comment from user (max ${FEEDBACK_COMMENT_MAX_LENGTH} characters)`,
+      }),
   })
   .openapi('FeedbackInput');
 

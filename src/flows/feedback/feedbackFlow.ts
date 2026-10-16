@@ -1,14 +1,21 @@
 import { GenkitError } from 'genkit';
 import { ai, z } from '../../lib/ai.js';
+import { FEEDBACK_COMMENT_MAX_LENGTH } from '../../lib/constants.js';
+
+/**
+ * Exported so the cap can be asserted directly: under vitest the Genkit action wrapper does
+ * not apply its input schema, so a test that calls the flow proves nothing about validation.
+ */
+export const FeedbackInputSchema = z.object({
+  traceId: z.string().min(1),
+  score: z.union([z.literal(0), z.literal(1)]),
+  comment: z.string().max(FEEDBACK_COMMENT_MAX_LENGTH).optional(),
+});
 
 export const feedbackFlow = ai.defineFlow(
   {
     name: 'feedback',
-    inputSchema: z.object({
-      traceId: z.string().min(1),
-      score: z.union([z.literal(0), z.literal(1)]),
-      comment: z.string().optional(),
-    }),
+    inputSchema: FeedbackInputSchema,
     outputSchema: z.object({}),
   },
   async ({ traceId, score, comment }) => {
