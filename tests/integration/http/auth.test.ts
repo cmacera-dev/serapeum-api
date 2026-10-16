@@ -135,6 +135,78 @@ describe.each(PROTECTED_ROUTES)('POST %s', (route) => {
   });
 });
 
+/**
+ * The header fields an unauthenticated caller picks freely. Each of these made jose raise an
+ * error whose name starts with neither 'JWT' nor 'JWS', so the old class-name allowlist in
+ * `verifySupabaseJwt` let it through unmapped and the caller got a logged 500 instead of a 401
+ * — the #274 regression again, reached by choosing a header rather than by sending a bad
+ * signature. Measured before the fix: 500 `internal_error` for all three, with
+ * `console.error('Unhandled error:', …)` carrying JOSEAlgNotAllowed, JWKSNoMatchingKey and
+ * JOSENotSupported respectively.
+ */
+describe('attacker-chosen JWT header fields', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  /** Hand-builds a token: these headers cannot be produced through `SignJWT`. */
+  function tokenWithHeader(header: Record<string, unknown>): string {
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+    const payload = {
+      sub: 'user-test-id',
+      aud: 'authenticated',
+      iss: TEST_ISSUER,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    };
+    return `${encode(header)}.${encode(payload)}.AAAA`;
+  }
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it('answers 401 for an alg outside the allowed set, without logging a fault', async () => {
+    const res = await post(
+      '/searchMedia',
+      `Bearer ${tokenWithHeader({ alg: 'HS256', typ: 'JWT' })}`
+    );
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: 'unauthorized' });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 401 for an unrecognised crit entry, without logging a fault', async () => {
+    const token = tokenWithHeader({ alg: 'RS256', crit: ['x'], x: 1 });
+    const res = await post('/searchMedia', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: 'unauthorized' });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 401 for an unknown kid, without logging a fault', async () => {
+    // A real signature, so only the `kid` lookup can fail. This is also what a legitimate
+    // client holding a token from a rotated signing key sends: it must be told to refresh,
+    // not told the server is broken.
+    const token = await new SignJWT({ sub: 'user-test-id' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'unknown-kid' })
+      .setAudience('authenticated')
+      .setIssuer(TEST_ISSUER)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(privateKey);
+    const res = await post('/searchMedia', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: 'unauthorized' });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('rejection body', () => {
   it('uses this API’s error shape, not Genkit’s INTERNAL envelope', async () => {
     const res = await post('/searchMedia');

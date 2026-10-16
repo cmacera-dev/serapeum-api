@@ -50,24 +50,26 @@ export async function verifySupabaseJwt(token: string): Promise<JWTPayload> {
       throw err;
     }
 
-    // Only map known jose JWT validation errors to UNAUTHENTICATED.
-    // Infrastructure/network errors from createRemoteJWKSet will bubble up as 500s.
-    if (
-      err instanceof joseErrors.JWTClaimValidationFailed ||
-      err instanceof joseErrors.JWTExpired ||
-      err instanceof joseErrors.JWTInvalid ||
-      err instanceof joseErrors.JWSSignatureVerificationFailed ||
-      err instanceof joseErrors.JWSInvalid ||
-      (err instanceof Error && err.name.startsWith('JWT')) ||
-      (err instanceof Error && err.name.startsWith('JWS'))
-    ) {
+    // Classify on jose's taxonomy, not on class names. Every error jose raises about the
+    // *token* is a client error, so the default is UNAUTHENTICATED; the only genuine faults
+    // are the two infrastructural JWKS failures, which must keep reaching the terminal
+    // handler as 500s. An allowlist of names cannot hold this line: `JOSEAlgNotAllowed`
+    // (header `alg`), `JOSENotSupported` (header `crit`) and `JWKSNoMatchingKey` (header
+    // `kid`) are all chosen by an unauthenticated caller, start with neither 'JWT' nor 'JWS',
+    // and so escaped unmapped and came back as 500 — #274 again, by a different route. The
+    // three header cases in tests/integration/http/auth.test.ts pin this.
+    const isJwksInfrastructureFault =
+      err instanceof joseErrors.JWKSTimeout || err instanceof joseErrors.JWKSInvalid;
+
+    if (err instanceof joseErrors.JOSEError && !isJwksInfrastructureFault) {
       throw new GenkitError({
         status: 'UNAUTHENTICATED',
         message: `Unauthorized: ${err.message}`, // Preserve the underlying jose reason
       });
     }
 
-    // Unrecognized errors (e.g. network failures for JWKS) propagate outward
+    // Everything else — a JWKS fetch failure, a malformed key set, a network error — is a
+    // genuine server fault and propagates outward
     throw err;
   }
 }
