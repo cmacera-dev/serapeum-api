@@ -18,16 +18,24 @@ import { feedbackFlow } from './flows/feedback/feedbackFlow.js';
 import './prompts/index.js';
 import './evals/index.js';
 
-export function createApp(corsOrigins: string[] | string): express.Express {
+export function createApp(
+  corsOrigins: string[] | string,
+  trustProxyHops: number | false = false
+): express.Express {
   const app = express();
 
-  // Vercel puts exactly one proxy in front of the app, and `req.ip` is meaningless
-  // without this — every caller would look like the proxy, collapsing the address-keyed
-  // limiter into a single shared bucket. A specific hop count rather than `true`, which
-  // would trust any spoofed X-Forwarded-For.
-  app.set('trust proxy', 1);
+  // How many proxy hops `req.ip` may be read through, per deployment — Vercel puts exactly
+  // one in front of the function, while a container with no ingress has none. It used to be
+  // the literal 1 for every target: on anything that does not rewrite X-Forwarded-For, that
+  // let each caller name their own `req.ip` and so pick their own bucket in the address-keyed
+  // backstop. Never `true`, which would trust any spoofed header, and the default is to
+  // trust nothing. See resolveTrustProxyHops in lib/env.ts.
+  app.set('trust proxy', trustProxyHops);
 
-  app.use(express.json());
+  // The limit is body-parser's own default, written down. It is the ceiling on every
+  // request this API accepts — the one that bounds a 100 KB `/feedback` comment and a
+  // 100 KB `query` — and a default nobody declared is a default nobody notices changing.
+  app.use(express.json({ limit: '100kb' }));
   app.use(cors({ origin: corsOrigins }));
 
   // Deliberately mounted before /health so the Vercel cron cannot be used as an
@@ -45,26 +53,35 @@ export function createApp(corsOrigins: string[] | string): express.Express {
     res.status(code).json({ status: 'error', error: result.error, timestamp });
   });
 
-  // `requireAuth` runs first and owns the HTTP answer for a rejected token; `expressHandler`
-  // only ever sees requests that already carry a valid one. See verifyJwt.ts for why the
-  // status code cannot be left to Genkit.
+  // `requireAuth` owns the HTTP answer for a rejected token; `expressHandler` only ever sees
+  // requests that already carry a valid one. See verifyJwt.ts for why the status code cannot
+  // be left to Genkit.
   const protect = { contextProvider: jwtContextProvider };
 
+  // `requireAuth` ahead of the per-user limiters, not behind them. The limiters key on the
+  // token's `sub`, and when they ran first they had to be told to skip failed requests so a
+  // forged `sub` could not spend a stranger's budget on its way to a 401. That refund also
+  // fires when the *client* disconnects, which handed the slot back while the LLM and
+  // catalog calls it had already paid for kept running — so the quota stopped bounding
+  // spend for anyone willing to hang up. Rejecting first removes the need for the refund:
+  // an unauthenticated request never reaches a per-user bucket, and `ipBackstop` (mounted
+  // above, counting everything) is what caps the volume reaching the verification path.
+
   // One upstream API per call.
-  app.post('/searchMedia', userLimiter, requireAuth, expressHandler(searchMedia, protect));
-  app.post('/searchBooks', userLimiter, requireAuth, expressHandler(searchBooks, protect));
-  app.post('/searchGames', userLimiter, requireAuth, expressHandler(searchGames, protect));
-  app.post('/getMovieDetail', userLimiter, requireAuth, expressHandler(getMovieDetail, protect));
-  app.post('/getTvDetail', userLimiter, requireAuth, expressHandler(getTvDetail, protect));
-  app.post('/feedback', userLimiter, requireAuth, expressHandler(feedbackFlow, protect));
+  app.post('/searchMedia', requireAuth, userLimiter, expressHandler(searchMedia, protect));
+  app.post('/searchBooks', requireAuth, userLimiter, expressHandler(searchBooks, protect));
+  app.post('/searchGames', requireAuth, userLimiter, expressHandler(searchGames, protect));
+  app.post('/getMovieDetail', requireAuth, userLimiter, expressHandler(getMovieDetail, protect));
+  app.post('/getTvDetail', requireAuth, userLimiter, expressHandler(getTvDetail, protect));
+  app.post('/feedback', requireAuth, userLimiter, expressHandler(feedbackFlow, protect));
 
   // Model calls, or a fan-out across several catalog APIs.
-  app.post('/searchAll', expensiveLimiter, requireAuth, expressHandler(searchAll, protect));
-  app.post('/searchWeb', expensiveLimiter, requireAuth, expressHandler(searchWeb, protect));
+  app.post('/searchAll', requireAuth, expensiveLimiter, expressHandler(searchAll, protect));
+  app.post('/searchWeb', requireAuth, expensiveLimiter, expressHandler(searchWeb, protect));
   app.post(
     '/orchestratorFlow',
-    expensiveLimiter,
     requireAuth,
+    expensiveLimiter,
     expressHandler(orchestratorFlow, protect)
   );
 

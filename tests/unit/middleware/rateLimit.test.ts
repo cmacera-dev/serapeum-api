@@ -115,27 +115,59 @@ describe('userLimiter', () => {
     expect((await get(active.origin, 'user-b')).status).toBe(200);
   });
 
-  it('does not let failed requests drain a user budget', async () => {
-    // This is what makes keying on an *unverified* `sub` safe: someone forging a victim's
-    // subject earns 401s, and those must not count against the victim.
+  it('keeps a slot spent once the request got past the gate', async () => {
+    // The limiter used to carry `skipFailedRequests`, which refunds on a failure *and* on a
+    // client disconnect. The disconnect refund handed the slot back while the LLM and catalog
+    // calls it had paid for kept running, so hanging up mid-request bought free work. The
+    // slot now stays spent whatever the outcome; a request that reaches this limiter has
+    // already been authenticated, so there is no stranger's budget to drain.
     active = await harness({ RATE_LIMIT_MAX: '2' }, (app, { userLimiter }) => {
       app.get('/flow', userLimiter, (req, res) => {
         if (req.query['fail'] === '1') {
-          res.status(401).json({ status: 'error' });
+          res.status(500).json({ status: 'error' });
           return;
         }
         res.json({ status: 'ok' });
       });
     });
 
+    const failing = (): Promise<Response> =>
+      fetch(`${active!.origin}/flow?fail=1`, {
+        headers: { authorization: `Bearer ${tokenFor('user-a')}` },
+      });
+
+    expect((await failing()).status).toBe(500);
+    expect((await failing()).status).toBe(500);
+
+    expect((await get(active.origin, 'user-a')).status).toBe(429);
+  });
+
+  it('is never reached by a request the gate rejects, so no budget is spent', async () => {
+    // What makes keying on the token's `sub` safe is the mounting order in `createApp`:
+    // `requireAuth` answers first, so a forged subject earns its 401 before any per-user
+    // bucket exists to charge. This stands in for that gate.
+    const rejectingGate: express.RequestHandler = (req, res, next) => {
+      if (req.query['forged'] === '1') {
+        res.status(401).json({ status: 'error', error: 'unauthorized' });
+        return;
+      }
+      next();
+    };
+
+    active = await harness({ RATE_LIMIT_MAX: '2' }, (app, { userLimiter }) => {
+      app.get('/flow', rejectingGate, userLimiter, (_req, res) => {
+        res.json({ status: 'ok' });
+      });
+    });
+
     for (let i = 0; i < 5; i++) {
-      const response = await fetch(`${active.origin}/flow?fail=1`, {
+      const response = await fetch(`${active.origin}/flow?forged=1`, {
         headers: { authorization: `Bearer ${tokenFor('victim')}` },
       });
       expect(response.status).toBe(401);
     }
 
-    // The budget is untouched despite five requests against it.
+    // The victim's budget is untouched despite five requests naming them.
     expect((await get(active.origin, 'victim')).status).toBe(200);
     expect((await get(active.origin, 'victim')).status).toBe(200);
     expect((await get(active.origin, 'victim')).status).toBe(429);
@@ -189,6 +221,34 @@ describe('expensiveLimiter', () => {
       expect((await call('/flow')).status).toBe(200);
     }
   });
+
+  it('does not refund the slot when the client hangs up mid-request', async () => {
+    // Measured before the fix: the aborted request's slot came back, so request 2 answered
+    // 200 while both handlers ran their work to completion — the client could buy LLM and
+    // catalog calls by disconnecting. Both handlers must still run (nothing observes the
+    // abort, which is a separate gap), but the quota must not be given back.
+    let handlersStarted = 0;
+    active = await harness({ RATE_LIMIT_EXPENSIVE_MAX: '1' }, (app, { expensiveLimiter }) => {
+      app.get('/costly', expensiveLimiter, (_req, res) => {
+        handlersStarted += 1;
+        // Stands in for the paid work: router prompt, Tavily, catalog fan-out, synthesizer.
+        setTimeout(() => res.json({ status: 'ok' }), 300);
+      });
+    });
+
+    const headers = { authorization: `Bearer ${tokenFor('aborter')}` };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    await fetch(`${active.origin}/costly`, { headers, signal: controller.signal }).catch(
+      (err: Error) => err.name
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const second = await fetch(`${active.origin}/costly`, { headers });
+
+    expect(second.status).toBe(429);
+    expect(handlersStarted).toBe(1);
+  });
 });
 
 describe('ipBackstop', () => {
@@ -207,5 +267,41 @@ describe('ipBackstop', () => {
     // Three 401s, then the backstop takes over — this is what stops an unauthenticated
     // flood from exercising JWT verification for free.
     expect(statuses).toEqual([401, 401, 401, 429, 429]);
+  });
+
+  it('buckets an IPv6 caller by subnet, not by full address', async () => {
+    // `ipKeyGenerator(ip, false)` gave every address its own bucket, so anyone holding a
+    // /64 — one residential allocation — walked past the floor by varying the last hexlet.
+    active = await harness({ RATE_LIMIT_BACKSTOP_MAX: '3' }, (app, { ipBackstop }) => {
+      app.get('/flow', ipBackstop, (_req, res) => {
+        res.json({ status: 'ok' });
+      });
+    });
+
+    const fromAddress = (address: string): Promise<Response> =>
+      fetch(`${active!.origin}/flow`, { headers: { 'x-forwarded-for': address } });
+
+    const statuses: number[] = [];
+    for (const address of ['2001:db8::1', '2001:db8::2', '2001:db8::3', '2001:db8::4']) {
+      statuses.push((await fromAddress(address)).status);
+    }
+
+    expect(statuses).toEqual([200, 200, 200, 429]);
+  });
+
+  it('still treats two IPv4 callers as two buckets', async () => {
+    // The subnet default must not collapse distinct IPv4 clients, which share no prefix.
+    active = await harness({ RATE_LIMIT_BACKSTOP_MAX: '1' }, (app, { ipBackstop }) => {
+      app.get('/flow', ipBackstop, (_req, res) => {
+        res.json({ status: 'ok' });
+      });
+    });
+
+    const fromAddress = (address: string): Promise<Response> =>
+      fetch(`${active!.origin}/flow`, { headers: { 'x-forwarded-for': address } });
+
+    expect((await fromAddress('203.0.113.1')).status).toBe(200);
+    expect((await fromAddress('203.0.113.1')).status).toBe(429);
+    expect((await fromAddress('198.51.100.7')).status).toBe(200);
   });
 });
