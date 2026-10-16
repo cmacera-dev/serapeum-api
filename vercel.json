@@ -8,6 +8,9 @@
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "env": {
+    "TRUST_PROXY_HOPS": "1"
+  },
   "functions": {
     "api/index.ts": {
       "maxDuration": 300,

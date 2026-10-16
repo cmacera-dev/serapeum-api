@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ConfigError, parsePort, resolveCorsOrigins } from '../../../src/lib/env.js';
+import {
+  ConfigError,
+  parsePort,
+  resolveCorsOrigins,
+  resolveTrustProxyHops,
+} from '../../../src/lib/env.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -67,5 +72,37 @@ describe('resolveCorsOrigins', () => {
     expect(() => resolveCorsOrigins({ NODE_ENV: 'production', CORS_ORIGINS: ' , ' })).toThrow(
       ConfigError
     );
+  });
+});
+
+describe('resolveTrustProxyHops', () => {
+  it('trusts nothing when the variable is unset', () => {
+    // The safe mistake is the one that under-trusts: a deployment with no XFF-rewriting
+    // ingress must not read `req.ip` out of a header the caller wrote.
+    expect(resolveTrustProxyHops({})).toBe(false);
+  });
+
+  it('returns the hop count a deployment declares', () => {
+    expect(resolveTrustProxyHops({ TRUST_PROXY_HOPS: '1' })).toBe(1);
+    expect(resolveTrustProxyHops({ TRUST_PROXY_HOPS: '2' })).toBe(2);
+  });
+
+  it('maps an explicit 0 to false, which is what Express wants', () => {
+    expect(resolveTrustProxyHops({ TRUST_PROXY_HOPS: '0' })).toBe(false);
+  });
+
+  it.each([['not-a-number'], ['-1'], ['1.5'], ['true']])(
+    'falls back to trusting nothing, with a warning, for %s',
+    (value) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(resolveTrustProxyHops({ TRUST_PROXY_HOPS: value })).toBe(false);
+      expect(warn).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('treats an empty value as unset, without warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveTrustProxyHops({ TRUST_PROXY_HOPS: '  ' })).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

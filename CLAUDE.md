@@ -207,22 +207,33 @@ layers in [src/middleware/rateLimit.ts](src/middleware/rateLimit.ts):
 
 | limiter | keyed on | counts failures | default |
 |---|---|---|---|
-| `ipBackstop` | address | yes | 600 / 15 min |
-| `userLimiter` | JWT `sub` | no | 200 / 15 min |
-| `expensiveLimiter` | JWT `sub` | no | 30 / 5 min |
+| `ipBackstop` | address subnet | yes | 600 / 15 min |
+| `userLimiter` | JWT `sub` | yes | 200 / 15 min |
+| `expensiveLimiter` | JWT `sub` | yes | 30 / 5 min |
 
 `expensiveLimiter` guards `/orchestratorFlow`, `/searchAll` and `/searchWeb` — the calls
 that hit a model or fan out across several catalogs.
 
-The per-user key comes from decoding the bearer token **without verifying it**; verification
-happens later in the Genkit context provider. That is safe because a forged `sub` cannot buy
-budget (the request 401s downstream and never reaches an upstream API) and cannot drain
-somebody else's either, since `skipFailedRequests` means the 401 is not counted. Raw volume
-is `ipBackstop`'s job, and it counts everything.
+**The per-user limiters are mounted *after* `requireAuth`, and that ordering is load
+bearing.** They key on the token's `sub`, which they decode rather than verify — safe only
+because the gate above them has already verified it, so a forged `sub` never reaches a
+per-user bucket. They used to run first and carry `skipFailedRequests` to keep the resulting
+401 from charging the victim. That option also refunds on client *disconnect*, which handed
+the slot back while the LLM and catalog calls it had paid for kept running uncancelled:
+hanging up mid-request bought free work, measured. Rejecting first removes the need for the
+refund, so a slot once taken stays spent. Unauthenticated volume is `ipBackstop`'s job, and
+it counts everything.
 
-`app.set('trust proxy', 1)` is required: Vercel puts one proxy in front, and without it every
-caller looks like the proxy and the address bucket collapses into one. A specific hop count,
-not `true`, which would trust a spoofed `X-Forwarded-For`.
+`ipKeyGenerator` is called with one argument, so the library's subnet default applies.
+Passing `false` gave every full IPv6 address its own bucket, which makes the floor useless
+against anyone holding a /64.
+
+The trusted proxy hop count is `TRUST_PROXY_HOPS`, parsed in
+[src/lib/env.ts](src/lib/env.ts) and passed into `createApp`, defaulting to **0 — trust
+nothing**. Vercel puts exactly one proxy in front and replaces `X-Forwarded-For`, so
+`vercel.json` sets it to `1`; a deployment whose port is reachable without such an ingress
+must leave it at 0, because with a hop count it does not have, every caller picks their own
+`req.ip` and so their own bucket. Never `true`, which would trust any spoofed header.
 
 All thresholds are overridable by env var — see `.env.example`.
 
@@ -254,8 +265,13 @@ real socket can catch this class of bug — see
 
 [src/middleware/errors.ts](src/middleware/errors.ts) adds a JSON 404 and a terminal error
 handler. Genkit's `expressHandler` deals with errors inside a flow; these cover everything
-else. The handler logs the real error and returns a generic message — the only detail passed
-back is "your JSON was malformed", which is useful and gives nothing away.
+else. The handler logs the real error and returns a generic message, with two exceptions:
+"your JSON was malformed", which is useful and gives nothing away, and **a 4xx the error
+already carries, which is passed through**. That second one was a defect of its own — a body
+over the `express.json({ limit: '100kb' })` ceiling raises body-parser's
+`PayloadTooLargeError` with `status: 413`, and answering 500 told the caller the server had
+broken rather than that their request was too big, while filling the fault log with client
+errors. A 5xx carried by an error is still answered as 500 and still logged.
 
 ### Configuration
 

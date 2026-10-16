@@ -10,7 +10,8 @@ let origin: string;
 
 beforeAll(async () => {
   const app = express();
-  app.use(express.json());
+  // Same declared limit as the real app, small enough to exceed in a test.
+  app.use(express.json({ limit: '1kb' }));
 
   app.get('/ok', (_req, res) => {
     res.json({ status: 'ok' });
@@ -20,6 +21,13 @@ beforeAll(async () => {
   });
   app.get('/boom', () => {
     throw new Error('secret internal detail: postgres://user:pw@host/db');
+  });
+  app.get('/teapot', () => {
+    throw Object.assign(new Error('I refuse'), { status: 418 });
+  });
+  app.get('/upstream-500', () => {
+    // A 5xx carried by the error is still a server fault and must not be passed through.
+    throw Object.assign(new Error('upstream exploded'), { status: 502 });
   });
 
   app.use(notFoundHandler);
@@ -67,6 +75,44 @@ describe('errorHandler', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ status: 'error', error: 'invalid_json' });
+  });
+
+  it('keeps a 4xx the error already carries, instead of calling it a server fault', async () => {
+    // body-parser raises PayloadTooLargeError with status 413. That used to be answered as
+    // 500 internal_error: the caller could not tell "your request is too big" from "the
+    // server is down", and every oversized body was logged as a fault.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await fetch(`${origin}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comment: 'x'.repeat(2048) }),
+    });
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ status: 'error', error: 'bad_request' });
+    // A client error is not a fault, so it does not go to the fault log.
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('passes through any 4xx, not just the ones body-parser raises', async () => {
+    const response = await fetch(`${origin}/teapot`);
+
+    expect(response.status).toBe(418);
+    // Still generic: the status is the useful part, the message is not.
+    expect(await response.text()).not.toContain('I refuse');
+  });
+
+  it('answers 500 for a 5xx carried by the error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await fetch(`${origin}/upstream-500`);
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ status: 'error', error: 'internal_error' });
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it('never leaks the exception message to the client', async () => {

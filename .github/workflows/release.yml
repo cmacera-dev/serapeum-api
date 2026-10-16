@@ -38,8 +38,15 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
+      # `--no` rather than bare `npx`: the CLI must come from the lockfile install above,
+      # with its integrity hash, and never be fetched from the registry mid-deploy. This
+      # step holds the production token, so whatever it executes runs with it; every
+      # `uses:` in this repository is pinned to a SHA for the same reason, and this was the
+      # one executable still resolved at run time. If this fails with "could not determine
+      # executable to call", `vercel` is missing from devDependencies — add it back rather
+      # than dropping the flag.
       - name: Deploy to Vercel
-        run: npx vercel --prod --yes
+        run: npx --no vercel --prod --yes
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}

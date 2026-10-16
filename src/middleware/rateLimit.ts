@@ -30,15 +30,15 @@ function numberFromEnv(name: string, fallback: number): number {
 /**
  * Rate-limit key for an authenticated caller: the `sub` claim of the bearer token.
  *
- * The token is decoded but deliberately NOT verified here. Verification happens inside the
- * Genkit context provider, further down the stack, and doing it twice would mean a second
- * signature check on every request.
+ * The token is decoded rather than verified, because `requireAuth` has already verified it:
+ * the per-user limiters are mounted *after* the gate (see `src/app.ts`), so a forged `sub`
+ * never reaches this function — it earns its 401 upstream, where no quota exists to spend.
+ * That ordering is what keeps one caller from draining another's budget, and it is load
+ * bearing: these limiters deliberately do NOT set `skipFailedRequests`, because a refund
+ * that fires on client disconnect hands the slot back while the paid LLM and catalog work
+ * already started keeps running uncancelled. A slot, once taken, stays spent.
  *
- * That is safe because of how the two layers combine. A forged `sub` cannot buy extra
- * budget: the request still fails verification downstream and never reaches an upstream
- * API. And a forged `sub` cannot *drain someone else's* budget either, because these
- * limiters are configured with `skipFailedRequests`, so the 401 it earns is not counted.
- * Unauthenticated volume is handled by `ipBackstop`, which counts everything.
+ * Unauthenticated volume is `ipBackstop`'s job, and it counts everything.
  */
 function subjectKey(req: Request, res: Response): string {
   const header = req.headers.authorization;
@@ -53,7 +53,7 @@ function subjectKey(req: Request, res: Response): string {
     }
   }
 
-  return ipKeyGenerator(req.ip ?? '', false) || `anon:${res.locals['requestId'] ?? 'unknown'}`;
+  return ipKeyGenerator(req.ip ?? '') || `anon:${res.locals['requestId'] ?? 'unknown'}`;
 }
 
 const shared: Partial<Options> = {
@@ -71,12 +71,16 @@ const shared: Partial<Options> = {
  *
  * Generous on purpose: this is not the per-user budget, it is the floor that stops someone
  * without a valid token from hammering the JWT verification path for free.
+ *
+ * `ipKeyGenerator` is called with one argument so the library's own subnet handling applies.
+ * Passing `false` bucketed every full IPv6 address separately, which makes the floor useless
+ * against anyone holding a /64 — a single residential allocation.
  */
 export const ipBackstop = rateLimit({
   ...shared,
   windowMs: minutes(numberFromEnv('RATE_LIMIT_BACKSTOP_WINDOW_MINUTES', 15)),
   limit: numberFromEnv('RATE_LIMIT_BACKSTOP_MAX', 600),
-  keyGenerator: (req: Request): string => ipKeyGenerator(req.ip ?? '', false),
+  keyGenerator: (req: Request): string => ipKeyGenerator(req.ip ?? ''),
 });
 
 /** Per-user budget for the flows that hit a single upstream API. */
@@ -85,7 +89,6 @@ export const userLimiter = rateLimit({
   windowMs: minutes(numberFromEnv('RATE_LIMIT_WINDOW_MINUTES', 15)),
   limit: numberFromEnv('RATE_LIMIT_MAX', 200),
   keyGenerator: subjectKey,
-  skipFailedRequests: true,
 });
 
 /**
@@ -100,5 +103,4 @@ export const expensiveLimiter = rateLimit({
   windowMs: minutes(numberFromEnv('RATE_LIMIT_EXPENSIVE_WINDOW_MINUTES', 5)),
   limit: numberFromEnv('RATE_LIMIT_EXPENSIVE_MAX', 30),
   keyGenerator: subjectKey,
-  skipFailedRequests: true,
 });

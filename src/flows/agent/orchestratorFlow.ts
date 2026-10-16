@@ -1,7 +1,7 @@
-import { inspect } from 'util';
 import { ai, z, activeModel } from '../../lib/ai.js';
 import { trace } from '@opentelemetry/api';
 import { getContext } from '@genkit-ai/core';
+import { summarizeError } from '../../lib/errorSummary.js';
 import { getTranslations } from '../../lib/translations.js';
 import { AgentResponseSchema, SearchAllOutputSchema } from '@serapeum/shared-schemas';
 import { generateCacheKey, getCachedResponse, cacheAsync } from '../../lib/queryCache.js';
@@ -159,6 +159,11 @@ export const orchestratorFlow = ai.defineFlow(
       }
     }
 
+    // Set wherever this request swallows a failure and answers anyway. Such a response is
+    // still the best thing to hand *this* caller, but it must not be written to the shared
+    // cache, where it would be served to everyone else for the whole TTL.
+    let degraded = false;
+
     // 1. Router
     const { output: route } = await routerPrompt({ query, language }, { model: activeModel });
 
@@ -192,6 +197,8 @@ export const orchestratorFlow = ai.defineFlow(
           language
         );
 
+        if (executionResult.errors && executionResult.errors.length > 0) degraded = true;
+
         const t = getTranslations(language);
         let generatedText = t['specific_fallback'];
         try {
@@ -206,24 +213,31 @@ export const orchestratorFlow = ai.defineFlow(
           );
           if (synthesis.text && synthesis.text.trim()) {
             generatedText = synthesis.text;
+          } else {
+            degraded = true;
           }
         } catch (error) {
+          degraded = true;
           console.error(
             `[orchestratorFlow] Synthesizer failed for specific entity "${route.extractedQuery}":`,
-            inspect(error, { depth: null, colors: true })
+            summarizeError(error)
           );
         }
 
-        return cacheAsync(cacheKey, {
-          kind: 'search_results' as const,
-          message: generatedText,
-          data: executionResult,
-          traceId,
-        });
+        return cacheAsync(
+          cacheKey,
+          {
+            kind: 'search_results' as const,
+            message: generatedText,
+            data: executionResult,
+            traceId,
+          },
+          { degraded }
+        );
       } catch (error) {
         console.error(
           `[orchestratorFlow] Specific Entity Search failed for query "${route.extractedQuery}":`,
-          inspect(error, { depth: null, colors: true })
+          summarizeError(error)
         );
         const t = getTranslations(language);
         return {
@@ -267,12 +281,17 @@ export const orchestratorFlow = ai.defineFlow(
               detail = await getTvDetail({ id: item.id, language, region });
             }
           } catch (err) {
+            // A factual answer built without the detail payload is the degraded version of
+            // itself: it is worth returning, and not worth pinning for the whole TTL.
+            degraded = true;
             console.warn(
               '[orchestratorFlow] Detail fetch failed for factual query, continuing without it:',
-              err
+              summarizeError(err)
             );
           }
         }
+
+        if (executionResult.errors && executionResult.errors.length > 0) degraded = true;
 
         const t = getTranslations(language);
         let generatedText = t['specific_fallback'];
@@ -288,24 +307,31 @@ export const orchestratorFlow = ai.defineFlow(
           );
           if (synthesis.text && synthesis.text.trim()) {
             generatedText = synthesis.text;
+          } else {
+            degraded = true;
           }
         } catch (error) {
+          degraded = true;
           console.error(
             `[orchestratorFlow] Synthesizer failed for factual query "${query}":`,
-            inspect(error, { depth: null, colors: true })
+            summarizeError(error)
           );
         }
 
-        return cacheAsync(cacheKey, {
-          kind: 'search_results' as const,
-          message: generatedText,
-          data: executionResult,
-          traceId,
-        });
+        return cacheAsync(
+          cacheKey,
+          {
+            kind: 'search_results' as const,
+            message: generatedText,
+            data: executionResult,
+            traceId,
+          },
+          { degraded }
+        );
       } catch (error) {
         console.error(
           `[orchestratorFlow] Factual Query path failed for "${route.extractedQuery}":`,
-          inspect(error, { depth: null, colors: true })
+          summarizeError(error)
         );
         const t = getTranslations(language);
         return {
@@ -329,9 +355,10 @@ export const orchestratorFlow = ai.defineFlow(
         });
         tavilyContext = tavilyResults.map((r) => r.content).join('\n');
       } catch (error) {
+        degraded = true;
         console.error(
           `[orchestratorFlow] Tavily search failed for query "${route.extractedQuery}":`,
-          inspect(error, { depth: null, colors: true })
+          summarizeError(error)
         );
         // Continue with the empty context the declaration already provides, rather than
         // crashing: discovery still works without web results, just less well.
@@ -348,7 +375,7 @@ export const orchestratorFlow = ai.defineFlow(
       } catch (error) {
         console.error(
           `[orchestratorFlow] Extractor failed for context length ${tavilyContext.length}:`,
-          inspect(error, { depth: null, colors: true })
+          summarizeError(error)
         );
         const t = getTranslations(language);
         return {
@@ -399,9 +426,10 @@ export const orchestratorFlow = ai.defineFlow(
           if (result.value.games) enrichmentResults.games.push(...result.value.games);
           if (result.value.errors) enrichmentResults.errors!.push(...result.value.errors);
         } else {
+          degraded = true;
           console.error(
             '[orchestratorFlow] Enrichment promise rejected:',
-            inspect(result.reason, { depth: null, colors: true })
+            summarizeError(result.reason)
           );
         }
       }
@@ -441,11 +469,13 @@ export const orchestratorFlow = ai.defineFlow(
         );
 
         const t = getTranslations(language);
+        if (!synthesis.text || !synthesis.text.trim()) degraded = true;
         let finalMessage =
           synthesis.text && synthesis.text.trim() ? synthesis.text : t.synthesis_failure;
 
         // Add a status message about partial failures if any
         if (enrichmentResults.errors && enrichmentResults.errors.length > 0) {
+          degraded = true;
           const failedTitles = enrichmentResults.errors.map(
             (e) => e.message.split('"')[1] || 'Unknown'
           );
@@ -456,33 +486,47 @@ export const orchestratorFlow = ai.defineFlow(
           }
         }
 
-        return cacheAsync(cacheKey, {
-          kind: 'discovery' as const,
-          message: finalMessage,
-          data: enrichmentResults,
-          traceId,
-        });
+        return cacheAsync(
+          cacheKey,
+          {
+            kind: 'discovery' as const,
+            message: finalMessage,
+            data: enrichmentResults,
+            traceId,
+          },
+          { degraded }
+        );
       } catch (error) {
         console.error(
           `[orchestratorFlow] Synthesizer failed for query "${query}":`,
-          inspect(error, { depth: null, colors: true })
+          summarizeError(error)
         );
         // Fallback: return data with a generic message
         const t = getTranslations(language);
-        return cacheAsync(cacheKey, {
-          kind: 'discovery' as const,
-          message: t['synthesis_failure'],
-          data: enrichmentResults,
-          traceId,
-        });
+        return cacheAsync(
+          cacheKey,
+          {
+            kind: 'discovery' as const,
+            message: t['synthesis_failure'],
+            data: enrichmentResults,
+            traceId,
+          },
+          { degraded: true }
+        );
       }
     }
 
+    // Reaching here means the router returned an intent no path handles, which is a router
+    // or schema problem rather than an answer worth keeping for a day.
     const t = getTranslations(language);
-    return cacheAsync(cacheKey, {
-      kind: 'refusal' as const,
-      message: t['unrecognized_intent'],
-      traceId,
-    });
+    return cacheAsync(
+      cacheKey,
+      {
+        kind: 'refusal' as const,
+        message: t['unrecognized_intent'],
+        traceId,
+      },
+      { degraded: true }
+    );
   }
 );

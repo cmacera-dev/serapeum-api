@@ -62,3 +62,28 @@ export function resolveCorsOrigins(env: NodeJS.ProcessEnv = process.env): string
 
   return origins.length === 1 ? (origins[0] as string) : origins;
 }
+
+/**
+ * Resolves how many proxy hops `req.ip` may be read through, from `TRUST_PROXY_HOPS`.
+ *
+ * The default is 0 — trust nothing — because the value that is right for one deployment is
+ * wrong for another, and the safe mistake is the one that under-trusts. Vercel puts exactly
+ * one proxy in front of the function and replaces `X-Forwarded-For`, so that project sets 1.
+ * A deployment whose port is reachable without an XFF-rewriting ingress must stay at 0: with
+ * a hop count it does not have, every caller picks their own `req.ip`, and the address-keyed
+ * backstop becomes a bucket the caller chooses.
+ *
+ * `0` and `false` both mean "trust nothing"; Express needs the boolean, not the number.
+ */
+export function resolveTrustProxyHops(env: NodeJS.ProcessEnv = process.env): number | false {
+  const raw = env['TRUST_PROXY_HOPS'];
+  if (raw === undefined || raw.trim() === '') return false;
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    console.warn(`⚠️ Invalid TRUST_PROXY_HOPS "${raw}", trusting no proxy.`);
+    return false;
+  }
+
+  return parsed === 0 ? false : parsed;
+}

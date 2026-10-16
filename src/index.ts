@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { createApp } from './app.js';
-import { ConfigError, parsePort, resolveCorsOrigins } from './lib/env.js';
+import { ConfigError, parsePort, resolveCorsOrigins, resolveTrustProxyHops } from './lib/env.js';
 
 const PORT = parsePort(process.env['PORT'], 3000);
 
@@ -20,7 +20,7 @@ try {
 
 console.log('🚀 Starting Serapeum API (Genkit Powered)...');
 
-const app = createApp(corsOrigins);
+const app = createApp(corsOrigins, resolveTrustProxyHops());
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
