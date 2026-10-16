@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { generateCacheKey, getCachedResponse, setCachedResponse } from '@/lib/queryCache.js';
+import {
+  cacheAsync,
+  generateCacheKey,
+  getCachedResponse,
+  setCachedResponse,
+} from '@/lib/queryCache.js';
 import type { AgentResponse } from '@serapeum/shared-schemas';
 
 const SUPABASE_URL = 'https://test.supabase.co';
@@ -201,5 +206,71 @@ describe('setCachedResponse', () => {
 
     expect(expiresAt).toBeGreaterThanOrEqual(before + 3600 * 1000);
     expect(expiresAt).toBeLessThanOrEqual(after + 3600 * 1000);
+  });
+});
+
+describe('cacheAsync', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env['SUPABASE_URL'] = SUPABASE_URL;
+    process.env['SUPABASE_SERVICE_ROLE_KEY'] = SERVICE_ROLE_KEY;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  /** Resolves once the fire-and-forget write has had a turn to run. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it('writes a sound response and returns it unchanged', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    expect(cacheAsync('somekey', cachedResponse)).toBe(cachedResponse);
+    await settle();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to write a response the caller marked degraded', async () => {
+    // The whole point: a degraded answer is shaped exactly like a sound one, so the gate
+    // cannot read it off `kind`. Stored, it would be served to every caller for the TTL.
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    expect(cacheAsync('somekey', cachedResponse, { degraded: true })).toBe(cachedResponse);
+    await settle();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('writes when degraded is explicitly false', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    cacheAsync('somekey', cachedResponse, { degraded: false });
+    await settle();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('never writes an error response, degraded or not', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const errorResponse: AgentResponse = {
+      kind: 'error',
+      error: 'Router failure',
+      details: 'nope',
+    };
+
+    cacheAsync('somekey', errorResponse);
+    cacheAsync('somekey', errorResponse, { degraded: false });
+    await settle();
+
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

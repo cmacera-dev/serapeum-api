@@ -41,13 +41,19 @@ export async function getCachedResponse(key: string): Promise<AgentResponse | nu
 }
 
 /**
- * Writes a non-error response to the cache asynchronously (fire-and-forget) and
- * returns it unchanged, so it can be used inline at any return site:
+ * Writes a response to the cache asynchronously (fire-and-forget) and returns it unchanged,
+ * so it can be used inline at any return site:
  *
- *   return cacheAsync(cacheKey, { kind: 'search_results', ... });
+ *   return cacheAsync(cacheKey, { kind: 'search_results', ... }, { degraded });
  *
- * Error responses are never cached — a transient failure should not be stored
- * and served as if it were a valid result on the next request.
+ * A transient failure must not be stored and served as if it were a valid result. That
+ * contract used to be enforced by testing `kind !== 'error'` alone — a test of *shape*,
+ * which every degraded path passes: a synthesizer that threw leaves the locale's fallback
+ * sentence in place and still returns `kind: 'search_results'`, and a catalog outage
+ * collects its failures into `errors[]` and still returns `discovery`. Those answers were
+ * written to the shared cache and served to every caller for the full TTL, with no way to
+ * invalidate them. So the caller now states provenance: `degraded` marks a response that
+ * only looks successful, and nothing marked that way is written.
  *
  * The underlying write is intentionally not awaited: callers get their response
  * immediately without paying the latency cost of the Supabase round-trip.
@@ -56,8 +62,13 @@ export async function getCachedResponse(key: string): Promise<AgentResponse | nu
  * completes after the response is sent. Outside Vercel it is a no-op and the
  * promise runs (but is not awaited by the runtime).
  */
-export function cacheAsync(key: string, response: AgentResponse): AgentResponse {
-  if (response.kind !== 'error') waitUntil(setCachedResponse(key, response));
+export function cacheAsync(
+  key: string,
+  response: AgentResponse,
+  options: { degraded?: boolean } = {}
+): AgentResponse {
+  const cacheable = response.kind !== 'error' && options.degraded !== true;
+  if (cacheable) waitUntil(setCachedResponse(key, response));
   return response;
 }
 

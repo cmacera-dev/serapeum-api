@@ -3,6 +3,7 @@ import { searchMediaTool } from '../../tools/search-media-tool.js';
 import { searchBooksTool } from '../../tools/search-books-tool.js';
 import { searchGamesTool } from '../../tools/search-games-tool.js';
 import { SearchAllOutputSchema, SearchErrorSchema } from '@serapeum/shared-schemas';
+import { summarizeError } from '../../lib/errorSummary.js';
 
 export const searchAll = ai.defineFlow(
   {
@@ -36,7 +37,7 @@ export const searchAll = ai.defineFlow(
     const errors: Array<z.infer<typeof SearchErrorSchema>> = [];
 
     if (movieResult.status === 'rejected') {
-      console.error('SearchMedia failed:', movieResult.reason);
+      console.error(`SearchMedia failed: ${summarizeError(movieResult.reason)}`);
       errors.push({
         source: 'media',
         message:
@@ -46,7 +47,7 @@ export const searchAll = ai.defineFlow(
       });
     }
     if (bookResult.status === 'rejected') {
-      console.error('SearchBooks failed:', bookResult.reason);
+      console.error(`SearchBooks failed: ${summarizeError(bookResult.reason)}`);
       errors.push({
         source: 'books',
         message:
@@ -56,7 +57,7 @@ export const searchAll = ai.defineFlow(
       });
     }
     if (gameResult.status === 'rejected') {
-      console.error('SearchGames failed:', gameResult.reason);
+      console.error(`SearchGames failed: ${summarizeError(gameResult.reason)}`);
       errors.push({
         source: 'games',
         message:

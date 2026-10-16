@@ -126,7 +126,10 @@ describe('orchestratorFlow — caching', () => {
     expect(cacheAsync).toHaveBeenCalledOnce();
     expect(cacheAsync).toHaveBeenCalledWith(
       'deadbeefcafe0000',
-      expect.objectContaining({ kind: 'search_results' })
+      expect.objectContaining({ kind: 'search_results' }),
+      // Nothing failed on the way here, so the answer is offered to the cache as sound.
+      // What happens when something did fail is covered in orchestratorFlowDegradedCache.
+      { degraded: false }
     );
   });
 
