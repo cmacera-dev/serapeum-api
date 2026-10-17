@@ -1,9 +1,10 @@
-import express from 'express';
+import express, { type RequestHandler } from 'express';
 import cors from 'cors';
 import { expressHandler } from '@genkit-ai/express';
 
 import { jwtContextProvider, requireAuth } from './middleware/verifyJwt.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
+import { validateFlowInput } from './middleware/validateFlowInput.js';
 import { expensiveLimiter, ipBackstop, userLimiter } from './middleware/rateLimit.js';
 import { checkSupabaseHealth } from './lib/health.js';
 import { searchMedia } from './flows/catalog/searchMedia.js';
@@ -58,6 +59,15 @@ export function createApp(
   // be left to Genkit.
   const protect = { contextProvider: jwtContextProvider };
 
+  // The two handlers every flow route mounts: this API answers an input-schema rejection with
+  // a 400 of its own, then Genkit runs the flow. Composed here, from one action, so the gate
+  // and the handler can never be given different flows — and so a route added later gets the
+  // validation by construction. See validateFlowInput.ts for why Genkit cannot answer it.
+  const flowRoute = (action: Parameters<typeof expressHandler>[0]): RequestHandler[] => [
+    validateFlowInput(action),
+    expressHandler(action, protect),
+  ];
+
   // `requireAuth` ahead of the per-user limiters, not behind them. The limiters key on the
   // token's `sub`, and when they ran first they had to be told to skip failed requests so a
   // forged `sub` could not spend a stranger's budget on its way to a 401. That refund also
@@ -68,22 +78,17 @@ export function createApp(
   // above, counting everything) is what caps the volume reaching the verification path.
 
   // One upstream API per call.
-  app.post('/searchMedia', requireAuth, userLimiter, expressHandler(searchMedia, protect));
-  app.post('/searchBooks', requireAuth, userLimiter, expressHandler(searchBooks, protect));
-  app.post('/searchGames', requireAuth, userLimiter, expressHandler(searchGames, protect));
-  app.post('/getMovieDetail', requireAuth, userLimiter, expressHandler(getMovieDetail, protect));
-  app.post('/getTvDetail', requireAuth, userLimiter, expressHandler(getTvDetail, protect));
-  app.post('/feedback', requireAuth, userLimiter, expressHandler(feedbackFlow, protect));
+  app.post('/searchMedia', requireAuth, userLimiter, ...flowRoute(searchMedia));
+  app.post('/searchBooks', requireAuth, userLimiter, ...flowRoute(searchBooks));
+  app.post('/searchGames', requireAuth, userLimiter, ...flowRoute(searchGames));
+  app.post('/getMovieDetail', requireAuth, userLimiter, ...flowRoute(getMovieDetail));
+  app.post('/getTvDetail', requireAuth, userLimiter, ...flowRoute(getTvDetail));
+  app.post('/feedback', requireAuth, userLimiter, ...flowRoute(feedbackFlow));
 
   // Model calls, or a fan-out across several catalog APIs.
-  app.post('/searchAll', requireAuth, expensiveLimiter, expressHandler(searchAll, protect));
-  app.post('/searchWeb', requireAuth, expensiveLimiter, expressHandler(searchWeb, protect));
-  app.post(
-    '/orchestratorFlow',
-    requireAuth,
-    expensiveLimiter,
-    expressHandler(orchestratorFlow, protect)
-  );
+  app.post('/searchAll', requireAuth, expensiveLimiter, ...flowRoute(searchAll));
+  app.post('/searchWeb', requireAuth, expensiveLimiter, ...flowRoute(searchWeb));
+  app.post('/orchestratorFlow', requireAuth, expensiveLimiter, ...flowRoute(orchestratorFlow));
 
   // Both must come last: Express matches in registration order.
   app.use(notFoundHandler);
