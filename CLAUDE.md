@@ -19,6 +19,7 @@ npm run dev                # tsx watch (no DevTools)
 npm run typecheck          # tsc --noEmit (src/ only)
 npm run lint               # eslint src/
 npm run test:run           # vitest + coverage; thresholds enforced, HTML report in coverage/
+npm run test:e2e:flow-input # tsx harness: input-schema rejections answer 4xx (not collected by vitest)
 npm run build              # tsc + copy locales → dist/
 ```
 
@@ -97,6 +98,7 @@ All checks run against `src/` only. Must pass before merge:
 | `typecheck` | `tsc --noEmit` |
 | `lint` | `eslint src --ext .ts` |
 | `test:run` | `vitest run --coverage` — thresholds enforced, see `vitest.config.ts` |
+| `test:e2e:flow-input` | the input-gate harness under plain `tsx`, which vitest cannot run — see [Input validation](#input-validation) (runs inside `test`) |
 | `build` | `tsc && cp -r src/locales dist/` |
 | `format:check` | `prettier --check "src/**/*.ts"` |
 | `check-pr-title` | PR title must be Conventional Commits — **no** `[DEV-XX]` prefix; issues are linked with `Closes #123` in the body. Skipped for Dependabot PRs |
@@ -244,10 +246,23 @@ Every flow route sits behind `requireAuth` in
 `expressHandler` rather than relying on Genkit's `contextProvider` to reject the request.
 
 That is not a style choice. Genkit picks the HTTP status with `getHttpStatus(e)`, which
-returns 401 only when the error is `instanceof` **its own** `GenkitError`. Genkit ships a
-dual build — `lib/index.mjs` for `import`, `lib/index.js` for `require` — so the class this
-ESM code throws is a different object from the one CommonJS `@genkit-ai/express` compares
-against. The check fails silently, falls through to the unknown-error branch, and every
+returns 401 only when the error is `instanceof` **its own** `GenkitError` — and it never is.
+Genkit ships a dual build, but the reason the CommonJS copy is the one doing the comparing is
+an asymmetry in the **export maps**, not the import syntax used here:
+
+```jsonc
+// @genkit-ai/express — "default" comes FIRST, so an ESM `import` still gets the CJS build
+{ "require": "./lib/index.js", "default": "./lib/index.js", "import": "./lib/index.mjs" }
+// genkit and @genkit-ai/core — "import" comes first, so an ESM `import` gets the ESM build
+{ "require": "./lib/index.js", "import": "./lib/index.mjs", "default": "./lib/index.js" }
+```
+
+Node resolves export conditions in declaration order, so `import { expressHandler } from
+'@genkit-ai/express'` loads `lib/index.js` — CommonJS — while `import { GenkitError } from
+'genkit'` loads `lib/index.mjs`. The class the error carries is therefore never the class the
+`instanceof` names, whatever this code does. **Do not read the old shorthand ("`.mjs` for
+`import`, `.js` for `require`") as meaning the check works for an ESM caller: it does not, and
+cannot.** The check fails silently, falls through to the unknown-error branch, and every
 rejected token came back as `500 {"message":"Internal Error","status":"INTERNAL"}` while the
 log said `UNAUTHENTICATED`. A client cannot tell "refresh your session" from "the server is
 down", and authentication noise buries real 5xx in monitoring.
@@ -260,6 +275,52 @@ caller — it populates flow context, and it is the reason a route mounted witho
 correct thrown error, and were green throughout. Only a test that reads a status code off a
 real socket can catch this class of bug — see
 [tests/integration/http/auth.test.ts](tests/integration/http/auth.test.ts).
+
+### Input validation
+
+The same hazard, one layer deeper. A flow whose `inputSchema` rejects raises `GenkitError`
+with status `INVALID_ARGUMENT`, which `getHttpStatus` misclassifies for exactly the reason
+above: every malformed body — an over-cap `/feedback` comment, an empty `query`, a missing
+field — answered `500 INTERNAL` and was written to the fault log, telling the caller to retry
+something only they could fix. The reasoning behind `requireAuth` had been scoped to
+authentication and never extended here.
+
+So [src/middleware/validateFlowInput.ts](src/middleware/validateFlowInput.ts) answers it at
+the layer that owns status codes, mounted ahead of `expressHandler` on all nine flow routes by
+the `flowRoute` helper in `src/app.ts`. Three things make it hold:
+
+- **The schema comes off the action** (`action.__action.inputSchema`), not from a per-flow
+  import, so a route added later gets the gate by construction — and the one route that
+  exports its schema (`FeedbackInputSchema`) is not a precedent to follow nine times.
+- **The check runs through Genkit's own `validateSchema`**, the very function the action
+  calls, so the gate and the action cannot disagree about what a valid body is. It only
+  inspects: that `Ajv` is built without `useDefaults` or `coerceTypes`, so the body the flow
+  receives is untouched by having passed through.
+- **A rejection is not logged**, like a rejected token. A genuine fault inside a flow body is
+  still Genkit's to answer, still 500, and still logged.
+
+Note what cannot cover this: `errorHandler`'s `clientErrorStatus` reads a *numeric* status
+while `GenkitError.status` is the string `INVALID_ARGUMENT`, and `expressHandler` answers
+before `next(err)` is ever reached.
+
+**Only part of this is testable under vitest.** `tests/setup-genkit.ts` mocks `ai.defineFlow`
+down to the implementation function, so a flow there has no `run` and Genkit cannot dispatch
+it at all. The 400s are answered *before* dispatch, so
+[tests/integration/http/flowInputValidation.test.ts](tests/integration/http/flowInputValidation.test.ts)
+asserts them in CI; the other half — a valid body still running the flow, a genuine fault
+still answering 500 and still logging — needs real flows, and lives in a plain `tsx` harness:
+
+```bash
+npm run test:e2e:flow-input
+```
+
+It is outside `tests/**/*.test.ts` on purpose, so vitest never collects it — **and `ci.yml`
+runs it as its own step in the `test` job, right after `test:run`.** Both halves have to be
+enforced somewhere a merge can see them: a harness that only runs when someone remembers it
+is the same gap that let #274 ship, where the unit tests asserted the thrown error and stayed
+green while every rejection came back as a 500. The harness needs no secrets and reaches no
+network — it defaults the three variables `src/lib/ai.ts` insists on at import, and points
+Supabase and Langfuse at a loopback stand-in.
 
 ### Errors
 

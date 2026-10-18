@@ -22,12 +22,16 @@ function extractBearerToken(headers: Record<string, string | undefined>): string
  * Express gate that answers authentication failures itself, before Genkit sees the request.
  *
  * It has to, because `expressHandler` cannot. Genkit picks the status with `getHttpStatus(e)`,
- * which returns 401 only when the error is `instanceof` *its own* `GenkitError`. Genkit ships
- * a dual build (`lib/index.mjs` for `import`, `lib/index.js` for `require`), so the class this
- * ESM code throws is a different object from the one CommonJS `@genkit-ai/express` compares
- * against. The check silently fails, falls through to the unknown-error branch, and every
- * rejection came back as `500 {"message":"Internal Error","status":"INTERNAL"}` — the server
- * log saying `UNAUTHENTICATED` all the while. That is issue #274.
+ * which returns 401 only when the error is `instanceof` *its own* `GenkitError` — and it never
+ * is. `@genkit-ai/express` lists `"default": "./lib/index.js"` *ahead* of `"import"` in its
+ * export map, and Node resolves conditions in declaration order, so importing it from ESM
+ * still loads the CommonJS build, while `genkit` and `@genkit-ai/core` (which list `"import"`
+ * first) load their `.mjs`. The class this code throws is therefore never the class that
+ * comparison names, whatever the import syntax. The check silently fails, falls through to the
+ * unknown-error branch, and every rejection came back as
+ * `500 {"message":"Internal Error","status":"INTERNAL"}` — the server log saying
+ * `UNAUTHENTICATED` all the while. That is issue #274; `validateFlowInput.ts` answers the same
+ * hazard for input schemas.
  *
  * Verifying here fixes it at the layer that owns HTTP status codes anyway: the answer comes
  * back in this API's own JSON shape, and the fix does not depend on Genkit internals that a

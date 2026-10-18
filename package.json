@@ -19,6 +19,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run --coverage",
+    "test:e2e:flow-input": "node --import tsx/esm tests/e2e/flowInputValidation.ts",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
