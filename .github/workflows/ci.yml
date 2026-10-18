@@ -43,6 +43,18 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
+      # Not part of `test:run`, and it cannot be: `tests/setup-genkit.ts` mocks
+      # `ai.defineFlow` down to the implementation function, so a flow under vitest has no
+      # `run` and Genkit's `expressHandler` cannot dispatch it — every request that reaches a
+      # flow *body* answers 500 regardless of what is being asserted. The vitest companion
+      # covers the input-gate rejections, which are answered before dispatch; this harness
+      # boots real flows against loopback stand-ins and covers the other half: that a body the
+      # schema accepts still runs the flow, and that a genuine fault inside one is still a
+      # logged 500. Leaving it out of CI is what #274 taught us not to do — the unit tests
+      # asserted the thrown error and stayed green while every rejection came back as 500.
+      - name: Run flow input-gate harness
+        run: npm run test:e2e:flow-input
+
       - name: Build
         run: npm run build
 

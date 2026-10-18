@@ -98,6 +98,7 @@ All checks run against `src/` only. Must pass before merge:
 | `typecheck` | `tsc --noEmit` |
 | `lint` | `eslint src --ext .ts` |
 | `test:run` | `vitest run --coverage` — thresholds enforced, see `vitest.config.ts` |
+| `test:e2e:flow-input` | the input-gate harness under plain `tsx`, which vitest cannot run — see [Input validation](#input-validation) (runs inside `test`) |
 | `build` | `tsc && cp -r src/locales dist/` |
 | `format:check` | `prettier --check "src/**/*.ts"` |
 | `check-pr-title` | PR title must be Conventional Commits — **no** `[DEV-XX]` prefix; issues are linked with `Closes #123` in the body. Skipped for Dependabot PRs |
@@ -313,7 +314,13 @@ still answering 500 and still logging — needs real flows, and lives in a plain
 npm run test:e2e:flow-input
 ```
 
-It is outside `tests/**/*.test.ts` on purpose, so vitest never collects it.
+It is outside `tests/**/*.test.ts` on purpose, so vitest never collects it — **and `ci.yml`
+runs it as its own step in the `test` job, right after `test:run`.** Both halves have to be
+enforced somewhere a merge can see them: a harness that only runs when someone remembers it
+is the same gap that let #274 ship, where the unit tests asserted the thrown error and stayed
+green while every rejection came back as a 500. The harness needs no secrets and reaches no
+network — it defaults the three variables `src/lib/ai.ts` insists on at import, and points
+Supabase and Langfuse at a loopback stand-in.
 
 ### Errors
 
