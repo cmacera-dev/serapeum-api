@@ -293,11 +293,27 @@ the `flowRoute` helper in `src/app.ts`. Three things make it hold:
   import, so a route added later gets the gate by construction — and the one route that
   exports its schema (`FeedbackInputSchema`) is not a precedent to follow nine times.
 - **The check runs through Genkit's own `validateSchema`**, the very function the action
-  calls, so the gate and the action cannot disagree about what a valid body is. It only
-  inspects: that `Ajv` is built without `useDefaults` or `coerceTypes`, so the body the flow
-  receives is untouched by having passed through.
+  calls, so the gate and the action cannot disagree about what a valid body is.
 - **A rejection is not logged**, like a rejected token. A genuine fault inside a flow body is
   still Genkit's to answer, still 500, and still logged.
+
+**The gate also applies the schema's defaults**, because validating is not normalising and
+Genkit never normalises. `parseSchema` hands the action back the *original* `data` over an
+`Ajv` built without `useDefaults`, and the one `inputSchema.parse(input)` that would apply
+them lives on `actionFn.stream`, which an HTTP flow request never takes. So a field declared
+`.optional().default('en')` stayed `undefined` at runtime while the flow's own inferred type
+— the schema's **output** type, where a defaulted field is required — said it could not be.
+`POST /orchestratorFlow {"data":{"query":"dune"}}` passed the gate, reached
+`generateCacheKey(query, undefined)` and died on `language.toLowerCase()`: a `500 INTERNAL`,
+in the fault log, for a body this API's published OpenAPI calls valid.
+
+Thirteen `.default()` declarations across the nine flow input schemas sit on that seam, which
+is why the gate closes it for all of them instead of a `?? 'en'` at one call site — the per-site
+fix leaves the next one to be found in production. Normalising there cannot make the gate
+disagree with the action in either direction: `validateSchema` stays the only thing that decides
+valid from invalid, and the Zod parse is best-effort, so on the one way the two can diverge — a
+`.refine()` ajv cannot see in the emitted JSON Schema — the body passes through untouched rather
+than being rejected by a gate stricter than the flow behind it.
 
 Note what cannot cover this: `errorHandler`'s `clientErrorStatus` reads a *numeric* status
 while `GenkitError.status` is the string `INVALID_ARGUMENT`, and `expressHandler` answers
@@ -307,8 +323,11 @@ before `next(err)` is ever reached.
 down to the implementation function, so a flow there has no `run` and Genkit cannot dispatch
 it at all. The 400s are answered *before* dispatch, so
 [tests/integration/http/flowInputValidation.test.ts](tests/integration/http/flowInputValidation.test.ts)
-asserts them in CI; the other half — a valid body still running the flow, a genuine fault
-still answering 500 and still logging — needs real flows, and lives in a plain `tsx` harness:
+asserts them in CI, and
+[tests/unit/middleware/validateFlowInput.test.ts](tests/unit/middleware/validateFlowInput.test.ts)
+asserts the normalisation against a flow-shaped stand-in; the other half — a valid body still
+running the flow, an omitted field arriving as its declared default, a genuine fault still
+answering 500 and still logging — needs real flows, and lives in a plain `tsx` harness:
 
 ```bash
 npm run test:e2e:flow-input
@@ -320,7 +339,10 @@ enforced somewhere a merge can see them: a harness that only runs when someone r
 is the same gap that let #274 ship, where the unit tests asserted the thrown error and stayed
 green while every rejection came back as a 500. The harness needs no secrets and reaches no
 network — it defaults the three variables `src/lib/ai.ts` insists on at import, and points
-Supabase and Langfuse at a loopback stand-in.
+Supabase and Langfuse at a loopback stand-in. `/orchestratorFlow` runs there for real against a
+**seeded cache hit**: the stand-in answers only the key `generateCacheKey('dune', 'en')`, so a
+hit is proof the flow body saw `language` as `'en'` and not merely as something non-`undefined`,
+and the hit short-circuits the pipeline before the router prompt, so no model is ever called.
 
 ### Errors
 

@@ -25,19 +25,21 @@ function describe(errors: ValidationErrorDetail[] | undefined): string {
 }
 
 /**
- * Express gate that answers input-schema rejections itself, before Genkit sees the request.
+ * Express gate that answers input-schema rejections itself, before Genkit sees the request —
+ * and applies the schema's own defaults to the body on the way through.
  *
- * It has to, for the same reason `requireAuth` does — and this is the other half of #274. A
- * flow whose `inputSchema` rejects raises a `GenkitError` with status `INVALID_ARGUMENT`, and
- * `expressHandler` turns that into a status with `getHttpStatus(e)`, which reads `e.code` only
- * when the error is `instanceof` *its own* `GenkitError`. It never is: `@genkit-ai/express`
- * lists `"default": "./lib/index.js"` ahead of `"import"` in its export map and Node resolves
- * conditions in declaration order, so an ESM import of that package gets the CommonJS build,
- * while `genkit` and `@genkit-ai/core` resolve to their `.mjs`. The class the error carries is
- * therefore never the class the comparison names. So every malformed body — an over-cap
- * `/feedback` comment, an empty `query`, a missing field — came back as
- * `500 {"message":"Internal Error","status":"INTERNAL"}` and was written to the fault log,
- * telling the caller to retry something only they can fix and burying real 5xx in monitoring.
+ * It has to answer them, for the same reason `requireAuth` does, and this is the other half of
+ * #274. A flow whose `inputSchema` rejects raises a `GenkitError` with status
+ * `INVALID_ARGUMENT`, and `expressHandler` turns that into a status with `getHttpStatus(e)`,
+ * which reads `e.code` only when the error is `instanceof` *its own* `GenkitError`. It never
+ * is: `@genkit-ai/express` lists `"default": "./lib/index.js"` ahead of `"import"` in its
+ * export map and Node resolves conditions in declaration order, so an ESM import of that
+ * package gets the CommonJS build, while `genkit` and `@genkit-ai/core` resolve to their
+ * `.mjs`. The class the error carries is therefore never the class the comparison names. So
+ * every malformed body — an over-cap `/feedback` comment, an empty `query`, a missing field —
+ * came back as `500 {"message":"Internal Error","status":"INTERNAL"}` and was written to the
+ * fault log, telling the caller to retry something only they can fix and burying real 5xx in
+ * monitoring.
  *
  * `errorHandler`'s `clientErrorStatus` cannot rescue it either: that reads a *numeric* status,
  * while `GenkitError.status` is the string `INVALID_ARGUMENT` — and `expressHandler` has
@@ -47,9 +49,27 @@ function describe(errors: ValidationErrorDetail[] | undefined): string {
  * route at once. The schema is read off the action itself (`__action.inputSchema`), not
  * imported per flow, so mounting a new route cannot forget it; and the check runs through
  * Genkit's own `validateSchema` — the very function the action calls — so this gate and the
- * action can never disagree about what a valid body is. `validateSchema` only inspects: ajv is
- * constructed without `useDefaults` or `coerceTypes`, so the body the flow receives is
- * untouched by having passed through here.
+ * action can never disagree about what a valid body is.
+ *
+ * WHY IT ALSO NORMALISES. `language: z.enum([...]).optional().default('en')` reads as a
+ * promise that the field is present by the time the flow body runs, and TypeScript agrees: a
+ * flow is typed against its input schema's *output* type, where a defaulted field is required.
+ * Genkit never keeps that promise on the unary path. `action.run` validates with
+ * `parseSchema`, which calls `validateSchema` and then returns the **original** `data`, and the
+ * shared `Ajv` behind it is constructed without `useDefaults`. The one `inputSchema.parse(input)`
+ * in Genkit — the call that *would* apply defaults — sits on `actionFn.stream`, which an HTTP
+ * flow request never takes. So an omitted field stays `undefined` while the type says it cannot
+ * be: `POST /orchestratorFlow {"data":{"query":"dune"}}` validated fine, reached
+ * `generateCacheKey(query, undefined)` and died on `language.toLowerCase()` — a 500 in the
+ * fault log for a body this API's published schema calls valid. Thirteen `.default()`
+ * declarations across the nine flow input schemas sit on that same seam, so the gate closes it
+ * once for all of them rather than leaving the next one to be found in production.
+ *
+ * Normalising here cannot make the gate disagree with the action, in either direction:
+ * `validateSchema` remains the only thing that decides valid from invalid, and the Zod parse is
+ * best-effort. On the one way the two can diverge — a `.refine()` ajv cannot see in the emitted
+ * JSON Schema — it leaves the body exactly as it arrived instead of rejecting a request the
+ * action itself would have accepted.
  */
 export function validateFlowInput(
   action: Action
@@ -57,12 +77,14 @@ export function validateFlowInput(
   const { inputSchema: schema, inputJsonSchema: jsonSchema } = action.__action;
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    const result = validateSchema((req.body as { data?: unknown } | undefined)?.data, {
-      schema,
-      jsonSchema,
-    });
+    const body = req.body as { data?: unknown } | undefined;
+    const result = validateSchema(body?.data, { schema, jsonSchema });
 
     if (result.valid) {
+      if (body && schema) {
+        const normalised = schema.safeParse(body.data);
+        if (normalised.success) body.data = normalised.data;
+      }
       next();
       return;
     }
