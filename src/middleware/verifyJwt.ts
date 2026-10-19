@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { GenkitError } from 'genkit';
 import type { ContextProvider } from 'genkit/context';
-import { verifySupabaseJwt, type JWTPayload } from '../lib/auth.js';
+import { verifySupabaseJwt } from '../lib/auth.js';
 import { errorBody } from './errors.js';
 
 /**
@@ -62,15 +62,45 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * What a flow may learn about its caller: the subject claim, and deliberately nothing else.
+ *
+ * `sub` is not a conservative guess — it is the whole of what this service reads. The only
+ * consumer of flow context anywhere in `src/` is `orchestratorFlow.ts`, which does
+ * `getContext()?.['sub']` to label a trace, so publishing more claims would widen the blast
+ * radius below without a single reader above.
+ */
+export interface FlowAuthContext {
+  sub?: string;
+}
+
+/**
  * Genkit `contextProvider` that validates incoming Supabase JWTs.
  *
  * `requireAuth` has already accepted the token by the time this runs, so in the normal path
- * this only rebuilds the payload as flow context — available via `getFlowContext()` if a flow
- * ever needs the caller's identity. It re-verifies rather than trusting a decode because that
- * second check is what keeps a route mounted without `requireAuth` from being wide open; the
- * cost is one signature verification against an in-memory JWKS.
+ * this only republishes the caller's identity as flow context. It re-verifies rather than
+ * trusting a decode because that second check is what keeps a route mounted without
+ * `requireAuth` from being wide open; the cost is one signature verification against an
+ * in-memory JWKS.
+ *
+ * **It returns a projection, not the payload, because flow context is exported telemetry.**
+ * Genkit copies whatever this resolves to onto the action's span: `action.mjs` shallow-copies
+ * `options.context`, replaces only top-level keys literally named `auth` or `secrets` with
+ * `"<redacted>"`, and JSON-serialises the rest onto the real OTel span attribute
+ * `genkit:metadata:context`. A Supabase payload has neither of those keys, and the redaction is
+ * shallow as well as name-keyed — a key called `auth` nested inside `user_metadata` survives
+ * verbatim. `src/lib/telemetry.ts` then registers a `BatchSpanProcessor` with no attribute
+ * filter, and Genkit appends caller processors untouched, so with both `LANGFUSE_*` keys set
+ * every claim in the token left for `cloud.langfuse.com` and stayed there for whatever the
+ * project's retention is. That was observed, not inferred: an `InMemorySpanExporter` registered
+ * through Genkit's own `enableTelemetry` shows the attribute carrying `email`, `phone` and
+ * `user_metadata` verbatim.
+ *
+ * Returning `{ sub }` fixes it at the one place that decides what leaves, rather than asking a
+ * third party's redaction to grow a list it has no reason to grow. The projection is here and
+ * not in `verifySupabaseJwt`, which stays a general-purpose verifier that `requireAuth` uses for
+ * its throw-or-not behaviour alone.
  */
-export const jwtContextProvider: ContextProvider<JWTPayload> = async ({ headers }) => {
+export const jwtContextProvider: ContextProvider<FlowAuthContext> = async ({ headers }) => {
   const token = extractBearerToken(headers as Record<string, string | undefined>);
 
   if (!token) {
@@ -80,5 +110,9 @@ export const jwtContextProvider: ContextProvider<JWTPayload> = async ({ headers 
     });
   }
 
-  return verifySupabaseJwt(token);
+  const { sub } = await verifySupabaseJwt(token);
+
+  // A token with no `sub` publishes nothing rather than a key whose value is `undefined`:
+  // the attribute above is JSON, and an absent claim should read as absent.
+  return sub === undefined ? {} : { sub };
 };

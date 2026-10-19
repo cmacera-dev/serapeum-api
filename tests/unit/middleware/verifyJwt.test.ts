@@ -12,17 +12,22 @@ const TEST_URL = 'https://abc123xyz.supabase.co';
 const TEST_ISSUER = `${TEST_URL}/auth/v1`;
 const JWKS_PATH = '/auth/v1/.well-known/jwks.json';
 
-let privateKey: any; // Using any to avoid complex jose KeyLike vs CryptoKey issues in different environments
-let publicKeyJWK: Record<string, any>;
+// Typed as CryptoKey, matching tests/integration/http/auth.test.ts. These were `any` with a
+// comment about jose KeyLike, which no longer applies: generateKeyPair resolves to CryptoKey, and
+// eslint rejects the `any` as soon as anything else in this file is staged.
+let privateKey: CryptoKey;
+let publicKeyJWK: Record<string, unknown>;
 
 /**
  * Generates a test RSA key pair for signing and JWKS mocking.
  */
-async function ensureKeys() {
+async function ensureKeys(): Promise<void> {
   if (privateKey) return;
-  const { privateKey: priv, publicKey: pub } = await generateKeyPair('RS256');
-  privateKey = priv;
-  publicKeyJWK = (await exportJWK(pub)) as Record<string, any>;
+  const { privateKey: priv, publicKey: pub } = await generateKeyPair('RS256', {
+    extractable: true,
+  });
+  privateKey = priv as CryptoKey;
+  publicKeyJWK = (await exportJWK(pub)) as Record<string, unknown>;
   publicKeyJWK['kid'] = 'test-kid';
   publicKeyJWK['alg'] = 'RS256';
   publicKeyJWK['use'] = 'sig';
@@ -131,14 +136,58 @@ describe('jwtContextProvider', () => {
     });
   });
 
-  it('returns the JWT payload when the token is valid', async () => {
-    const token = await signToken({ sub: 'user-123', email: 'test@example.com' });
+  it('publishes the sub claim when the token is valid', async () => {
+    const token = await signToken({ sub: 'user-123' });
 
     const context = await jwtContextProvider(makeContext(`Bearer ${token}`));
 
-    expect(context).toMatchObject({
+    expect(context).toEqual({ sub: 'user-123' });
+  });
+
+  /**
+   * Flow context is exported telemetry, not a scratch object. Genkit shallow-copies whatever the
+   * provider resolves to onto the span attribute `genkit:metadata:context`, redacting only
+   * top-level keys literally named `auth` or `secrets` — so anything published here reaches
+   * Langfuse verbatim whenever both LANGFUSE_* keys are set. `toEqual` rather than `toMatchObject`
+   * is the whole point of these: the claim is about what is ABSENT, and `toMatchObject` would
+   * pass while every one of these fields leaked.
+   */
+  it('publishes no claim other than sub, whatever else the token carries', async () => {
+    const token = await signToken({
       sub: 'user-123',
       email: 'test@example.com',
+      phone: '+10000000000',
+      user_metadata: { full_name: 'Test Person' },
+      app_metadata: { provider: 'email' },
+      session_id: 'session-abc',
     });
+
+    const context = await jwtContextProvider(makeContext(`Bearer ${token}`));
+
+    expect(context).toEqual({ sub: 'user-123' });
+    expect(Object.keys(context)).toEqual(['sub']);
+  });
+
+  it('redacts nothing by name, because it publishes nothing by default', async () => {
+    // Genkit's own redaction is name-keyed AND shallow: a key called `auth` nested inside
+    // another claim survives it. The projection makes that irrelevant rather than relying on it.
+    const token = await signToken({
+      sub: 'user-123',
+      user_metadata: { auth: 'nested-marker', secrets: 'nested-marker' },
+    });
+
+    const context = await jwtContextProvider(makeContext(`Bearer ${token}`));
+
+    expect(JSON.stringify(context)).not.toContain('nested-marker');
+  });
+
+  it('publishes an empty context when the token carries no sub', async () => {
+    // Supabase always issues one, so this is about not writing a key whose value is `undefined`
+    // into an attribute that is serialised as JSON.
+    const token = await signToken({ email: 'test@example.com' });
+
+    const context = await jwtContextProvider(makeContext(`Bearer ${token}`));
+
+    expect(context).toEqual({});
   });
 });
