@@ -271,6 +271,19 @@ The `contextProvider` is still wired, and still verifies. It is no longer what a
 caller — it populates flow context, and it is the reason a route mounted without
 `requireAuth` fails closed rather than open.
 
+**It publishes `{ sub }` and nothing else, because flow context is exported telemetry.** Genkit
+shallow-copies whatever the provider resolves to onto the real OTel span attribute
+`genkit:metadata:context`, replacing only top-level keys literally named `auth` or `secrets` —
+and a Supabase payload has neither, while the redaction is shallow as well as name-keyed, so a
+key called `auth` nested inside `user_metadata` survives verbatim. `src/lib/telemetry.ts` then
+registers a `BatchSpanProcessor` with no attribute filter. So returning the payload meant that
+with both `LANGFUSE_*` keys set, every claim in the token — `email`, `phone`, `user_metadata` —
+was exported to a third-party processor for whatever the project's retention is. Observed with
+an `InMemorySpanExporter`, not inferred. Narrowing costs nothing: the only reader of flow
+context anywhere in `src/` is `orchestratorFlow.ts`, which reads `sub` to label a trace. Assert
+absence with `toEqual`, never `toMatchObject` — the latter passes while every extra claim
+leaks.
+
 **Assertions about auth belong at the HTTP layer.** The unit tests always asserted the
 correct thrown error, and were green throughout. Only a test that reads a status code off a
 real socket can catch this class of bug — see
