@@ -55,6 +55,14 @@ jobs:
       - name: Run flow input-gate harness
         run: npm run test:e2e:flow-input
 
+      # scripts/generate-openapi.ts registers every path by hand, and nothing tied those
+      # registrations to the router — so `POST /searchWeb` was mounted and serving a paid
+      # upstream for months while the spec that generates the Flutter DTOs listed eight routes,
+      # not ten. This reads the real route table off the Express app and fails on any drift in
+      # either direction. See scripts/check-openapi-routes.ts.
+      - name: Check OpenAPI covers every mounted route
+        run: npm run check:openapi
+
       - name: Build
         run: npm run build
 

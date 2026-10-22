@@ -570,6 +570,118 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /searchWeb and /health
+//
+// Both are mounted in src/app.ts and were absent from this spec until 2026-10-23 — not
+// because anyone decided they did not belong, but because this file registers paths by hand
+// and nothing compared it against the router. `scripts/check-openapi-routes.ts` now does,
+// and it runs in CI, so the next route cannot go missing the same way.
+//
+// /health is documented even though no client generated from this spec needs it: an
+// allowlist of routes exempt from the contract is a place for drift to hide, and the rule
+// "every mounted route is in the spec" has no exceptions to maintain.
+// ---------------------------------------------------------------------------
+
+const SearchWebInputSchema = z
+  .object({
+    query: z.string().min(1).openapi({
+      description: 'Web search query',
+      example: 'Dune Part Two reviews',
+    }),
+    searchDepth: z.enum(['basic', 'advanced']).optional().default('basic').openapi({
+      description:
+        'Tavily search depth. `advanced` costs more per call and is rate limited harder upstream.',
+      example: 'basic',
+    }),
+  })
+  .openapi('SearchWebInput');
+
+const WebSearchResultSchema = z
+  .object({
+    title: z.string().openapi({ description: 'Page title' }),
+    url: z.string().url().openapi({ description: 'Result URL' }),
+    content: z.string().openapi({ description: 'Extracted snippet' }),
+    score: z.number().openapi({ description: 'Tavily relevance score' }),
+    published_date: z
+      .string()
+      .optional()
+      .openapi({ description: 'Publication date, when Tavily reports one' }),
+  })
+  .openapi('WebSearchResult');
+
+const HealthResponseSchema = z
+  .object({
+    status: z.enum(['ok', 'error']).openapi({ example: 'ok' }),
+    error: z.string().optional().openapi({
+      description: 'Present only when status is error',
+      example: 'supabase_unreachable',
+    }),
+    timestamp: z.string().openapi({ description: 'ISO 8601 timestamp of the check' }),
+  })
+  .openapi('HealthResponse');
+
+registry.registerPath({
+  method: 'post',
+  path: '/searchWeb',
+  summary: 'Web search',
+  description:
+    'Runs a web search through Tavily and returns the raw results. Behind the expensive rate limiter, since every call reaches a paid upstream.',
+  tags: ['Catalog'],
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: SearchWebInputSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Web search results, most relevant first',
+      content: { 'application/json': { schema: z.array(WebSearchResultSchema) } },
+    },
+    400: {
+      description: 'Invalid request body',
+      content: { 'application/json': { schema: ErrorResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized — missing or invalid bearer token',
+      content: { 'application/json': { schema: ErrorResponseSchema } },
+    },
+    429: {
+      description: 'Rate limit exceeded',
+      content: { 'application/json': { schema: ErrorResponseSchema } },
+    },
+    500: {
+      description: 'Internal server error',
+      content: { 'application/json': { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/health',
+  summary: 'Health check',
+  description:
+    'Public, unauthenticated. Pings Supabase Postgres, which also keeps the project awake on the free tier. Called by a Vercel cron every five days.',
+  tags: ['Ops'],
+  responses: {
+    200: {
+      description: 'Supabase reachable',
+      content: { 'application/json': { schema: HealthResponseSchema } },
+    },
+    500: {
+      description: 'Required environment variables are missing',
+      content: { 'application/json': { schema: HealthResponseSchema } },
+    },
+    503: {
+      description: 'Supabase unreachable or returning 5xx',
+      content: { 'application/json': { schema: HealthResponseSchema } },
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Generate and write the spec
 // ---------------------------------------------------------------------------
 
