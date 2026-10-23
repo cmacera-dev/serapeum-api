@@ -460,10 +460,10 @@ mounting style it was written for. CI runs it in the `test` job.
 There is deliberately **no allowlist**. "Every mounted route is in the spec" has no exceptions to
 maintain, which is why `/health` is documented even though no generated client needs it.
 
-**Known gap, not yet fixed:** the spec documents each request body as the flow's bare input schema,
-while the API actually requires Genkit's envelope — `{"data": { … }}`. Every documented route is
-affected, so a client generated strictly from this spec would be rejected on every call. Fixing it
-changes the generated Dart DTOs, which is a cross-repo decision rather than a silent correction.
+**The documented request bodies do not match what the API accepts** — the spec omits Genkit's
+`{"data": { … }}` envelope on every route. Tracked in
+[#362](https://github.com/cmacera-dev/serapeum-api/issues/362); the options and the cross-repo
+consequence live there, not here.
 
 ---
 
