@@ -270,6 +270,35 @@ const blockers: Blocker[] = [
     },
   },
   {
+    id: 'opentelemetry-api-1.10',
+    title: '@opentelemetry/api 1.10 is rejected by the OpenTelemetry SDK peer range',
+    waitingOn:
+      '`@opentelemetry/sdk-trace-node` widening `peerDependencies["@opentelemetry/api"]` past 1.10',
+    owns: ['@opentelemetry/api'],
+    action: [
+      'Remove the `@opentelemetry/api` ignore rule from `.github/dependabot.yml`',
+      'Let Dependabot reopen the `@opentelemetry/api` bump, or bump it by hand',
+    ],
+    check(): BlockerStatus {
+      // Empirical for the same reason as typescript-7: the SDK 1.x line we are held on and
+      // the 2.x line both cap the peer below 1.10, so this is the ERESOLVE of PR #370.
+      const probe = probeResolution((pkg) => {
+        if (pkg.dependencies !== undefined) pkg.dependencies['@opentelemetry/api'] = '^1.10.0';
+      });
+      const peers = npmView<Record<string, string>>(
+        '@opentelemetry/sdk-trace-node@latest',
+        'peerDependencies'
+      );
+      const declared = peers?.['@opentelemetry/api'] ?? 'unknown';
+      return {
+        resolved: probe.ok,
+        detail: probe.ok
+          ? 'the dependency set resolves with `@opentelemetry/api@^1.10.0`'
+          : `\`@opentelemetry/sdk-trace-node@latest\` declares \`peer @opentelemetry/api@"${declared}"\``,
+      };
+    },
+  },
+  {
     id: 'extract-zip',
     title: 'extract-zip has an unpatched advisory',
     waitingOn: 'a release of `extract-zip` newer than 2.0.1',

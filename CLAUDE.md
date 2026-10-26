@@ -178,6 +178,7 @@ overrides.
 |---|---|
 | `zod` v4, `@asteasolutions/zod-to-openapi` v8 | `@genkit-ai/core` moving off `zod@^3` |
 | `@opentelemetry/*` 2.x | `@genkit-ai/core` moving off `@opentelemetry/sdk-node@^0.52` |
+| `@opentelemetry/api` 1.10 | `@opentelemetry/sdk-trace-node` widening `peer @opentelemetry/api@">=1.0.0 <1.10.0"` — 2.x carries the same cap |
 | `typescript` 7 | `@typescript-eslint` widening `peer typescript@">=4.8.4 <6.1.0"` |
 | `extract-zip` | any release newer than 2.0.1 (unmaintained since 2023) |
 | `@types/node` | the runtime moving off Node 22 — types must never run ahead of the runtime, or `tsc` accepts APIs that crash in production |
