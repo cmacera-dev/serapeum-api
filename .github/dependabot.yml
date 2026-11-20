@@ -25,6 +25,10 @@ updates:
         versions: ["4.x", ">=4"]
       - dependency-name: "@asteasolutions/zod-to-openapi"
         versions: ["8.x", ">=8"]
+      # 1.x declares peerOptional zod@^4, which npm still enforces against our zod 3, so
+      # npm ci fails with ERESOLVE (PR #395). Lifts with the zod blocker above.
+      - dependency-name: "@tavily/core"
+        versions: [">=1"]
       # Blocked by genkit pinning @opentelemetry/sdk-node@^0.52 (sdk-trace-base@1.25)
       - dependency-name: "@opentelemetry/exporter-trace-otlp-http"
         versions: [">=0.53"]
