@@ -199,9 +199,9 @@ const blockers: Blocker[] = [
     id: 'zod-v4',
     title: 'zod is pinned to 3.x by genkit',
     waitingOn: '`@genkit-ai/core` declaring a dependency on `zod@^4`',
-    owns: ['zod', '@asteasolutions/zod-to-openapi'],
+    owns: ['zod', '@asteasolutions/zod-to-openapi', '@tavily/core'],
     action: [
-      'Remove the `zod` and `@asteasolutions/zod-to-openapi` ignore rules from `.github/dependabot.yml`',
+      'Remove the `zod`, `@asteasolutions/zod-to-openapi` and `@tavily/core` ignore rules from `.github/dependabot.yml`',
       'Migrate the schemas in `packages/shared-schemas/` to zod v4 (breaking changes: https://zod.dev/v4)',
       'Bump `@asteasolutions/zod-to-openapi` to v8, which requires zod v4',
     ],
