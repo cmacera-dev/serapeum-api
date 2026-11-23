@@ -76,8 +76,15 @@ updates:
         patterns:
           - "vitest"
           - "@vitest/*"
-      dev-dependencies:
-        dependency-type: "development"
+      # One PR for every other minor and patch bump, production and development alike.
+      # `main` requires branches to be up to date before merging, so each merged PR leaves
+      # every other open one BEHIND, and Dependabot only rebases on a conflict: four PRs
+      # opened together merged one rebase at a time. Fewer PRs is fewer of those waits.
+      # Majors stay out on purpose — each needs its own review and auto-merge skips them.
+      # A dependency joins the first group that matches it, so genkit and vitest keep theirs.
+      minor-and-patch:
+        patterns:
+          - "*"
         update-types:
           - "minor"
           - "patch"
@@ -96,3 +103,11 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "chore(ci)"
+    # Same reason as the npm `minor-and-patch` group: one PR instead of one per action.
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
